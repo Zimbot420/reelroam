@@ -32,23 +32,42 @@ interface ExtractResult {
   extractionMethod: 'text' | 'vision'
 }
 
+// --- Resolve redirect URLs (e.g. vm.tiktok.com/XXXXX → tiktok.com/@user/video/ID) ---
+
+async function resolveUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
+    })
+    // res.url is the final URL after all redirects
+    return res.url && res.url !== url ? res.url : url
+  } catch {
+    return url
+  }
+}
+
 // --- oEmbed fetching ---
 
 async function fetchOEmbed(url: string, platform: string): Promise<OEmbedData> {
+  // Resolve short/redirect URLs before calling oEmbed
+  const resolvedUrl = await resolveUrl(url)
+
   let oembedUrl = ''
 
   if (platform === 'youtube') {
-    oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
+    oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(resolvedUrl)}&format=json`
   } else if (platform === 'tiktok') {
-    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`
+    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(resolvedUrl)}`
   } else if (platform === 'instagram') {
     // Instagram oEmbed requires a Facebook access token — returns limited data without one
-    oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(url)}`
+    oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(resolvedUrl)}`
   }
 
   try {
     const res = await fetch(oembedUrl, {
-      headers: { 'User-Agent': 'ReelRoam/1.0' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
     })
     if (!res.ok) return {}
     return await res.json()
@@ -128,20 +147,18 @@ function parseLocations(raw: string): ExtractResult {
 // --- Text extraction ---
 
 async function extractWithText(url: string, platform: string): Promise<ExtractResult> {
-  const oembed = await fetchOEmbed(url, platform)
+  const resolvedUrl = await resolveUrl(url)
+  const oembed = await fetchOEmbed(resolvedUrl, platform)
 
   const textBlock = [
     oembed.title && `Title: ${oembed.title}`,
     oembed.author_name && `Creator: ${oembed.author_name}`,
     oembed.description && `Description: ${oembed.description}`,
-    `Source URL: ${url}`,
+    `Source URL: ${resolvedUrl}`,
+    resolvedUrl !== url && `Original URL: ${url}`,
   ]
     .filter(Boolean)
     .join('\n')
-
-  if (!textBlock.trim()) {
-    throw new Error('No metadata could be fetched from this URL')
-  }
 
   const system = `You are a travel location extractor. Extract all named locations from the text provided.
 Return ONLY valid JSON — no markdown, no explanation. Use this exact structure:
@@ -195,11 +212,12 @@ async function getVideoImages(url: string, platform: string): Promise<string[]> 
 }
 
 async function extractWithVision(url: string, platform: string): Promise<ExtractResult> {
-  const imageUrls = await getVideoImages(url, platform)
+  const resolvedUrl = await resolveUrl(url)
+  const imageUrls = await getVideoImages(resolvedUrl, platform)
 
   if (imageUrls.length === 0) {
     // Fall back to text if no images available
-    const result = await extractWithText(url, platform)
+    const result = await extractWithText(resolvedUrl, platform)
     return { ...result, extractionMethod: 'vision' }
   }
 
@@ -227,7 +245,7 @@ Confidence is 0.0–1.0. suggestedDays is how many days a trip to these places w
         role: 'user',
         content: [
           ...imageContent,
-          { type: 'text', text: `Identify all travel locations visible in these video frames. Source URL: ${url}` },
+          { type: 'text', text: `Identify all travel locations visible in these video frames. Source URL: ${resolvedUrl}` },
         ],
       },
     ],
