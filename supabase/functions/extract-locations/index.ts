@@ -38,36 +38,39 @@ interface ExtractResult {
 
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
 
-function abortAfter(ms: number): AbortController {
+// Always clears the timer so Deno Deploy has no lingering async ops
+function fetchWithTimeout(input: string, init: RequestInit, ms: number): Promise<Response> {
   const ctrl = new AbortController()
-  setTimeout(() => ctrl.abort(), ms)
-  return ctrl
+  const timer = setTimeout(() => ctrl.abort(), ms)
+  return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer))
 }
 
 function extractMetaTag(html: string, ...names: string[]): string {
   for (const name of names) {
-    let m = html.match(new RegExp(`<meta[^>]+property=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
-           ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${name}["']`, 'i'))
-    if (m?.[1]) return m[1].trim()
-    m = html.match(new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
-      ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+name=["']${name}["']`, 'i'))
-    if (m?.[1]) return m[1].trim()
+    const patterns = [
+      new RegExp(`<meta[^>]+property=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'),
+      new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${name}["']`, 'i'),
+      new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'),
+      new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+name=["']${name}["']`, 'i'),
+    ]
+    for (const pat of patterns) {
+      const m = html.match(pat)
+      if (m?.[1]) return m[1].trim()
+    }
   }
   return ''
 }
 
-// Attempt oEmbed — 4 second hard timeout
 async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbedData> {
   let oembedUrl = ''
-  if (platform === 'youtube')   oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`
+  if (platform === 'youtube')        oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`
   else if (platform === 'tiktok')    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(targetUrl)}`
   else if (platform === 'instagram') oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(targetUrl)}`
   if (!oembedUrl) return {}
   try {
-    const res = await fetch(oembedUrl, {
+    const res = await fetchWithTimeout(oembedUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
-      signal: abortAfter(4000).signal,
-    })
+    }, 4000)
     if (!res.ok) return {}
     return await res.json()
   } catch {
@@ -75,15 +78,13 @@ async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbed
   }
 }
 
-// Scrape OG meta tags from the page HTML — 6 second hard timeout, reads until </head> or 15 KB
 async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEmbedData }> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'GET',
       redirect: 'follow',
       headers: { 'User-Agent': MOBILE_UA, 'Accept': 'text/html' },
-      signal: abortAfter(6000).signal,
-    })
+    }, 6000)
     const finalUrl = res.url || url
     if (!res.ok || !res.headers.get('content-type')?.includes('text/html')) {
       res.body?.cancel()
@@ -123,7 +124,6 @@ async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEm
   }
 }
 
-// Run oEmbed and page scraping in parallel — whichever returns useful data first wins
 async function fetchVideoMeta(url: string, platform: string): Promise<{ data: OEmbedData; resolvedUrl: string }> {
   const [oembedResult, pageResult] = await Promise.all([
     tryOEmbedUrl(url, platform),
