@@ -98,10 +98,11 @@ export default function ProcessingScreen() {
         advanceTo(2);
         const extraction = await extractLocations(urlStr, platformStr, device_id);
 
-        if (extraction.needsVision) {
-          router.replace({ pathname: '/upgrade', params: { reason: 'vision', url: urlStr, platform: platformStr } });
-          return;
-        }
+        // TODO: re-enable vision gate before launch
+        // if (extraction.needsVision) {
+        //   router.replace({ pathname: '/upgrade', params: { reason: 'vision', url: urlStr, platform: platformStr } });
+        //   return;
+        // }
 
         // Step 3: Generate itinerary (edge function also saves to Supabase)
         advanceTo(3);
@@ -129,6 +130,8 @@ export default function ProcessingScreen() {
         setError(
           message.includes('Failed to save')
             ? 'We could not save your trip. Please check your connection and try again.'
+            : message.includes('private') || message.includes('login') || message.includes('deleted')
+            ? message
             : 'Something went wrong. The link may be private or unsupported.',
         );
       }

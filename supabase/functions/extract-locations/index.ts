@@ -33,38 +33,40 @@ interface ExtractResult {
 }
 
 // --- Resolve redirect URLs (e.g. vm.tiktok.com/XXXXX → tiktok.com/@user/video/ID) ---
+// Uses GET (not HEAD) because many platforms ignore or mishandle HEAD for redirects.
 
 async function resolveUrl(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
-      method: 'HEAD',
+      method: 'GET',
       redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
+      headers: {
+        // Mobile Safari UA — TikTok is more cooperative with this than generic bots
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html',
+      },
     })
-    // res.url is the final URL after all redirects
-    return res.url && res.url !== url ? res.url : url
+    // Cancel the body — we only care about the final URL from the redirect chain
+    res.body?.cancel()
+    return res.url || url
   } catch {
     return url
   }
 }
 
 // --- oEmbed fetching ---
+// Tries the original URL first, then the resolved canonical URL as a fallback.
 
-async function fetchOEmbed(url: string, platform: string): Promise<OEmbedData> {
-  // Resolve short/redirect URLs before calling oEmbed
-  const resolvedUrl = await resolveUrl(url)
-
+async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbedData> {
   let oembedUrl = ''
-
   if (platform === 'youtube') {
-    oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(resolvedUrl)}&format=json`
+    oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`
   } else if (platform === 'tiktok') {
-    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(resolvedUrl)}`
+    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(targetUrl)}`
   } else if (platform === 'instagram') {
-    // Instagram oEmbed requires a Facebook access token — returns limited data without one
-    oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(resolvedUrl)}`
+    oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(targetUrl)}`
   }
-
+  if (!oembedUrl) return {}
   try {
     const res = await fetch(oembedUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
@@ -74,6 +76,23 @@ async function fetchOEmbed(url: string, platform: string): Promise<OEmbedData> {
   } catch {
     return {}
   }
+}
+
+async function fetchOEmbed(url: string, platform: string): Promise<{ data: OEmbedData; resolvedUrl: string }> {
+  // 1. Try oEmbed with the original URL
+  const direct = await tryOEmbedUrl(url, platform)
+  if (direct.title || direct.description) return { data: direct, resolvedUrl: url }
+
+  // 2. Follow redirects to get canonical URL, then retry oEmbed
+  const resolvedUrl = await resolveUrl(url)
+  if (resolvedUrl !== url) {
+    const resolved = await tryOEmbedUrl(resolvedUrl, platform)
+    if (resolved.title || resolved.description) return { data: resolved, resolvedUrl }
+    // Even if oEmbed still fails, return the resolved URL so Claude gets the canonical form
+    return { data: direct, resolvedUrl }
+  }
+
+  return { data: direct, resolvedUrl: url }
 }
 
 // --- Claude API call ---
@@ -147,15 +166,21 @@ function parseLocations(raw: string): ExtractResult {
 // --- Text extraction ---
 
 async function extractWithText(url: string, platform: string): Promise<ExtractResult> {
-  const resolvedUrl = await resolveUrl(url)
-  const oembed = await fetchOEmbed(resolvedUrl, platform)
+  const { data: oembed, resolvedUrl } = await fetchOEmbed(url, platform)
+
+  const hasMetadata = !!(oembed.title || oembed.description || oembed.author_name)
+
+  if (!hasMetadata) {
+    throw new Error(
+      'We could not read this video\'s details. The video may be private, deleted, or require a login to view.',
+    )
+  }
 
   const textBlock = [
-    oembed.title && `Title: ${oembed.title}`,
-    oembed.author_name && `Creator: ${oembed.author_name}`,
-    oembed.description && `Description: ${oembed.description}`,
+    oembed.title        && `Title: ${oembed.title}`,
+    oembed.author_name  && `Creator: ${oembed.author_name}`,
+    oembed.description  && `Description: ${oembed.description}`,
     `Source URL: ${resolvedUrl}`,
-    resolvedUrl !== url && `Original URL: ${url}`,
   ]
     .filter(Boolean)
     .join('\n')
@@ -204,7 +229,7 @@ async function getVideoImages(url: string, platform: string): Promise<string[]> 
       )
     }
   } else {
-    const oembed = await fetchOEmbed(url, platform)
+    const { data: oembed } = await fetchOEmbed(url, platform)
     if (oembed.thumbnail_url) images.push(oembed.thumbnail_url)
   }
 
@@ -212,12 +237,11 @@ async function getVideoImages(url: string, platform: string): Promise<string[]> 
 }
 
 async function extractWithVision(url: string, platform: string): Promise<ExtractResult> {
-  const resolvedUrl = await resolveUrl(url)
-  const imageUrls = await getVideoImages(resolvedUrl, platform)
+  const imageUrls = await getVideoImages(url, platform)
 
   if (imageUrls.length === 0) {
     // Fall back to text if no images available
-    const result = await extractWithText(resolvedUrl, platform)
+    const result = await extractWithText(url, platform)
     return { ...result, extractionMethod: 'vision' }
   }
 
@@ -245,7 +269,7 @@ Confidence is 0.0–1.0. suggestedDays is how many days a trip to these places w
         role: 'user',
         content: [
           ...imageContent,
-          { type: 'text', text: `Identify all travel locations visible in these video frames. Source URL: ${resolvedUrl}` },
+          { type: 'text', text: `Identify all travel locations visible in these video frames. Source URL: ${url}` },
         ],
       },
     ],
