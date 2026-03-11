@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
-import { saveTrip } from '../lib/api/trips';
+import { getOrCreateDeviceId } from '../lib/deviceId';
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -40,8 +40,8 @@ export default function ProcessingScreen() {
   const router = useRouter();
   const { url, platform } = useLocalSearchParams();
 
-  const [currentStep, setCurrentStep] = useState(0);
-  const [error, setError] = useState(null);
+  const [currentStep, setCurrentStep] = useState<Step>(0);
+  const [error, setError] = useState<string | null>(null);
   const [isDone, setIsDone] = useState(false);
 
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -58,7 +58,7 @@ export default function ProcessingScreen() {
     return () => pulseAnim.stopAnimation();
   }, []);
 
-  function advanceTo(step) {
+  function advanceTo(step: Step) {
     Animated.timing(messageOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
       setCurrentStep(step);
       Animated.timing(messageOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
@@ -68,38 +68,67 @@ export default function ProcessingScreen() {
 
   useEffect(() => {
     if (!url || !platform) { setError('No URL provided.'); return; }
+
+    const urlStr = Array.isArray(url) ? url[0] : url;
+    const platformStr = (Array.isArray(platform) ? platform[0] : platform) as 'tiktok' | 'instagram' | 'youtube';
+
     async function run() {
       try {
+        // Step 0: Detect platform
         advanceTo(0);
+        const device_id = await getOrCreateDeviceId();
         await new Promise((r) => setTimeout(r, 500));
+
+        // Step 1: Fetch video metadata (happens inside extractLocations)
         advanceTo(1);
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 400));
+
+        // Step 2: Extract locations via edge function
         advanceTo(2);
-        const extraction = await extractLocations(url, platform);
+        const extraction = await extractLocations(urlStr, platformStr, device_id);
+
         if (extraction.needsVision) {
-          router.replace({ pathname: '/upgrade', params: { reason: 'vision', url, platform } });
+          router.replace({ pathname: '/upgrade', params: { reason: 'vision', url: urlStr, platform: platformStr } });
           return;
         }
+
+        // Step 3: Generate itinerary (edge function also saves to Supabase)
         advanceTo(3);
-        const { title, itinerary } = await generateItinerary(extraction.locations, platform);
+        const { slug } = await generateItinerary({
+          ...extraction,
+          device_id,
+          is_pro: false,
+          source_url: urlStr,
+          platform: platformStr,
+        });
+
+        // Step 4: Done — navigate to trip
         advanceTo(4);
-        const trip = await saveTrip({ sourceUrl: url, platform, title, locations: extraction.locations, itinerary, extractionMethod: extraction.extractionMethod, isPro: false });
         Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start(() => {
           setIsDone(true);
-          setTimeout(() => { router.replace({ pathname: '/trip/[slug]', params: { slug: trip.share_slug } }); }, 400);
+          setTimeout(() => { router.replace({ pathname: '/trip/[slug]', params: { slug } }); }, 400);
         });
-      } catch (err) {
-        setError(err?.message?.includes('Failed to save')
-          ? 'We could not save your trip. Please check your connection and try again.'
-          : 'Something went wrong. The link may be private or unsupported.');
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : '';
+        if (message === 'RATE_LIMIT_EXCEEDED') {
+          router.replace({ pathname: '/upgrade', params: { reason: 'rate_limit' } });
+          return;
+        }
+        setError(
+          message.includes('Failed to save')
+            ? 'We could not save your trip. Please check your connection and try again.'
+            : 'Something went wrong. The link may be private or unsupported.',
+        );
       }
     }
     run();
   }, []);
 
   const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const platformMeta = platform ? PLATFORM_META[platform] : null;
-  const shortUrl = url ? url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
+  const platformStr = platform ? (Array.isArray(platform) ? platform[0] : platform) : null;
+  const urlStr = url ? (Array.isArray(url) ? url[0] : url) : '';
+  const platformMeta = platformStr ? PLATFORM_META[platformStr] : null;
+  const shortUrl = urlStr ? urlStr.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
 
   if (error) {
     return (
@@ -110,7 +139,7 @@ export default function ProcessingScreen() {
         </View>
         <Text className="text-xl font-bold text-gray-900 text-center mb-2">Something went wrong</Text>
         <Text className="text-gray-500 text-sm text-center leading-relaxed mb-8">{error}</Text>
-        <TouchableOpacity onPress={() => router.replace({ pathname: '/', params: { prefillUrl: url } })} className="w-full h-13 rounded-2xl items-center justify-center mb-3" style={{ backgroundColor: '#0D9488' }}>
+        <TouchableOpacity onPress={() => router.replace({ pathname: '/', params: { prefillUrl: urlStr } })} className="w-full h-13 rounded-2xl items-center justify-center mb-3" style={{ backgroundColor: '#0D9488' }}>
           <Text className="text-white font-semibold text-base">Try Again</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.replace('/')} className="w-full h-13 rounded-2xl items-center justify-center bg-gray-100">
@@ -130,7 +159,7 @@ export default function ProcessingScreen() {
         {platformMeta && (
           <View className="flex-row items-center gap-2 px-3 py-1.5 rounded-full mb-10" style={{ backgroundColor: platformMeta.color + '18' }}>
             <View className="w-5 h-5 rounded-md items-center justify-center" style={{ backgroundColor: platformMeta.color }}>
-              <Ionicons name={platformMeta.icon} size={11} color="white" />
+              <Ionicons name={platformMeta.icon as any} size={11} color="white" />
             </View>
             <Text className="text-xs font-medium" style={{ color: platformMeta.color }}>{platformMeta.label}</Text>
           </View>
