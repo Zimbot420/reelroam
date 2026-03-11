@@ -1,4 +1,3 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const CORS_HEADERS = {
@@ -327,13 +326,17 @@ Confidence is 0.0–1.0. suggestedDays is how many days a trip to these places w
 
 // --- Main handler ---
 
-serve(async (req) => {
+Deno.serve(async (req) => {
+  console.log('[extract-locations] request:', req.method)
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS })
   }
 
   try {
-    const { url, platform, method, device_id }: ExtractRequest = await req.json()
+    const body = await req.json()
+    const { url, platform, method, device_id } = body as ExtractRequest
+    console.log('[extract-locations] body parsed, platform:', platform, 'method:', method)
 
     if (!url || !platform || !device_id) {
       return new Response(
@@ -345,6 +348,7 @@ serve(async (req) => {
     // Rate limit check (free tier: 3 trips/month)
     if (method !== 'vision') {
       const limited = await isRateLimited(device_id)
+      console.log('[extract-locations] rate limited:', limited)
       if (limited) {
         return new Response(
           JSON.stringify({ error: 'RATE_LIMIT_EXCEEDED' }),
@@ -353,16 +357,18 @@ serve(async (req) => {
       }
     }
 
+    console.log('[extract-locations] starting extraction for:', url)
     const result =
       method === 'vision'
         ? await extractWithVision(url, platform)
         : await extractWithText(url, platform)
 
+    console.log('[extract-locations] extraction done, locations:', result.locations?.length)
     return new Response(JSON.stringify(result), {
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
     })
   } catch (err) {
-    console.error('extract-locations error:', err)
+    console.error('[extract-locations] error:', err instanceof Error ? err.message : String(err))
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : 'Internal server error' }),
       { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } },
