@@ -12,7 +12,15 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zimbot420.reelroam",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["reelroam"]
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,10 +29,45 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.zimbot420.reelroam",
+      "intentFilters": [
+        {
+          "action": "android.intent.action.SEND",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "*.tiktok.com" },
+            { "scheme": "https", "host": "*.instagram.com" },
+            { "scheme": "https", "host": "*.youtube.com" },
+            { "scheme": "https", "host": "youtu.be" },
+            { "scheme": "https", "host": "vm.tiktok.com" }
+          ],
+          "category": ["android.intent.category.DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1
+          },
+          "androidIntentFilters": ["text/*"]
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2716a19d-fb0f-4b7b-a300-69c99b9fbf61"
+      }
+    },
+    "owner": "zimbot420"
   }
 }
