@@ -33,21 +33,22 @@ interface ExtractResult {
 }
 
 // --- Metadata fetching ---
-// Three-tier strategy:
-//   1. oEmbed API (clean, fast — works well for YouTube)
-//   2. oEmbed with resolved canonical URL (for short links like vm.tiktok.com)
-//   3. Scrape OG/meta tags from page HTML (fallback when oEmbed is blocked by platform)
+// Runs oEmbed and page scraping in parallel with hard timeouts.
+// Sequential chaining was causing Supabase edge function timeouts (code 499).
 
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
 
-// Extract a meta tag value from raw HTML
+function abortAfter(ms: number): AbortController {
+  const ctrl = new AbortController()
+  setTimeout(() => ctrl.abort(), ms)
+  return ctrl
+}
+
 function extractMetaTag(html: string, ...names: string[]): string {
   for (const name of names) {
-    // property="name" content="value"  (OG tags)
     let m = html.match(new RegExp(`<meta[^>]+property=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
            ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${name}["']`, 'i'))
     if (m?.[1]) return m[1].trim()
-    // name="name" content="value"  (standard meta)
     m = html.match(new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
       ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+name=["']${name}["']`, 'i'))
     if (m?.[1]) return m[1].trim()
@@ -55,27 +56,45 @@ function extractMetaTag(html: string, ...names: string[]): string {
   return ''
 }
 
-// Fetch a page and return its final URL + OG meta tags, reading only up to the closing </head>
+// Attempt oEmbed — 4 second hard timeout
+async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbedData> {
+  let oembedUrl = ''
+  if (platform === 'youtube')   oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`
+  else if (platform === 'tiktok')    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(targetUrl)}`
+  else if (platform === 'instagram') oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(targetUrl)}`
+  if (!oembedUrl) return {}
+  try {
+    const res = await fetch(oembedUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
+      signal: abortAfter(4000).signal,
+    })
+    if (!res.ok) return {}
+    return await res.json()
+  } catch {
+    return {}
+  }
+}
+
+// Scrape OG meta tags from the page HTML — 6 second hard timeout, reads until </head> or 15 KB
 async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEmbedData }> {
   try {
     const res = await fetch(url, {
       method: 'GET',
       redirect: 'follow',
       headers: { 'User-Agent': MOBILE_UA, 'Accept': 'text/html' },
+      signal: abortAfter(6000).signal,
     })
     const finalUrl = res.url || url
-    const contentType = res.headers.get('content-type') ?? ''
-    if (!res.ok || !contentType.includes('text/html')) {
+    if (!res.ok || !res.headers.get('content-type')?.includes('text/html')) {
       res.body?.cancel()
       return { finalUrl, data: {} }
     }
 
-    // Stream the body until we hit </head> or 30 KB
     const reader = res.body?.getReader()
     if (!reader) return { finalUrl, data: {} }
     const decoder = new TextDecoder()
     let html = ''
-    while (html.length < 30000) {
+    while (html.length < 15000) {
       const { done, value } = await reader.read()
       if (done) break
       html += decoder.decode(value, { stream: true })
@@ -85,11 +104,6 @@ async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEm
 
     const rawTitle = extractMetaTag(html, 'og:title')
       || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? '')
-    const description = extractMetaTag(html, 'og:description', 'description')
-    const thumbnail  = extractMetaTag(html, 'og:image')
-    const author     = extractMetaTag(html, 'og:site_name')
-
-    // Strip platform suffixes from titles (e.g. "... | TikTok", "... • Instagram")
     const title = rawTitle
       .replace(/\s*[|•·]\s*(TikTok|Instagram|YouTube).*$/i, '')
       .replace(/\s*on TikTok$/i, '')
@@ -98,10 +112,10 @@ async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEm
     return {
       finalUrl,
       data: {
-        title:         title       || undefined,
-        description:   description || undefined,
-        thumbnail_url: thumbnail   || undefined,
-        author_name:   author      || undefined,
+        title:         title || undefined,
+        description:   extractMetaTag(html, 'og:description', 'description') || undefined,
+        thumbnail_url: extractMetaTag(html, 'og:image') || undefined,
+        author_name:   extractMetaTag(html, 'og:site_name') || undefined,
       },
     }
   } catch {
@@ -109,43 +123,21 @@ async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEm
   }
 }
 
-async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbedData> {
-  let oembedUrl = ''
-  if (platform === 'youtube') {
-    oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`
-  } else if (platform === 'tiktok') {
-    oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(targetUrl)}`
-  } else if (platform === 'instagram') {
-    oembedUrl = `https://graph.facebook.com/instagram_oembed?url=${encodeURIComponent(targetUrl)}`
-  }
-  if (!oembedUrl) return {}
-  try {
-    const res = await fetch(oembedUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' } })
-    if (!res.ok) return {}
-    return await res.json()
-  } catch {
-    return {}
-  }
-}
-
+// Run oEmbed and page scraping in parallel — whichever returns useful data first wins
 async function fetchVideoMeta(url: string, platform: string): Promise<{ data: OEmbedData; resolvedUrl: string }> {
-  // 1. Try oEmbed with the original URL (fast path — works for YouTube and some TikTok URLs)
-  const direct = await tryOEmbedUrl(url, platform)
-  if (direct.title || direct.description) return { data: direct, resolvedUrl: url }
+  const [oembedResult, pageResult] = await Promise.all([
+    tryOEmbedUrl(url, platform),
+    fetchPageMeta(url),
+  ])
 
-  // 2. Scrape the page directly — follows redirects (resolves vm.tiktok.com etc.)
-  //    and extracts OG meta tags. Works even when the oEmbed API is blocked.
-  const { finalUrl, data: pageMeta } = await fetchPageMeta(url)
-  if (pageMeta.title || pageMeta.description) return { data: pageMeta, resolvedUrl: finalUrl }
-
-  // 3. If page scraping got the resolved URL but no useful data, try oEmbed once more
-  //    with the canonical URL (e.g. after vm.tiktok.com → tiktok.com/@user/video/ID)
-  if (finalUrl !== url) {
-    const resolved = await tryOEmbedUrl(finalUrl, platform)
-    if (resolved.title || resolved.description) return { data: resolved, resolvedUrl: finalUrl }
+  if (oembedResult.title || oembedResult.description) {
+    return { data: oembedResult, resolvedUrl: url }
+  }
+  if (pageResult.data.title || pageResult.data.description) {
+    return { data: pageResult.data, resolvedUrl: pageResult.finalUrl }
   }
 
-  return { data: {}, resolvedUrl: finalUrl }
+  return { data: {}, resolvedUrl: pageResult.finalUrl || url }
 }
 
 // --- Claude API call ---
