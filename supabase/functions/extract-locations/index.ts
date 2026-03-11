@@ -32,30 +32,82 @@ interface ExtractResult {
   extractionMethod: 'text' | 'vision'
 }
 
-// --- Resolve redirect URLs (e.g. vm.tiktok.com/XXXXX → tiktok.com/@user/video/ID) ---
-// Uses GET (not HEAD) because many platforms ignore or mishandle HEAD for redirects.
+// --- Metadata fetching ---
+// Three-tier strategy:
+//   1. oEmbed API (clean, fast — works well for YouTube)
+//   2. oEmbed with resolved canonical URL (for short links like vm.tiktok.com)
+//   3. Scrape OG/meta tags from page HTML (fallback when oEmbed is blocked by platform)
 
-async function resolveUrl(url: string): Promise<string> {
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+
+// Extract a meta tag value from raw HTML
+function extractMetaTag(html: string, ...names: string[]): string {
+  for (const name of names) {
+    // property="name" content="value"  (OG tags)
+    let m = html.match(new RegExp(`<meta[^>]+property=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
+           ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${name}["']`, 'i'))
+    if (m?.[1]) return m[1].trim()
+    // name="name" content="value"  (standard meta)
+    m = html.match(new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"'<>]+)["']`, 'i'))
+      ?? html.match(new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+name=["']${name}["']`, 'i'))
+    if (m?.[1]) return m[1].trim()
+  }
+  return ''
+}
+
+// Fetch a page and return its final URL + OG meta tags, reading only up to the closing </head>
+async function fetchPageMeta(url: string): Promise<{ finalUrl: string; data: OEmbedData }> {
   try {
     const res = await fetch(url, {
       method: 'GET',
       redirect: 'follow',
-      headers: {
-        // Mobile Safari UA — TikTok is more cooperative with this than generic bots
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html',
-      },
+      headers: { 'User-Agent': MOBILE_UA, 'Accept': 'text/html' },
     })
-    // Cancel the body — we only care about the final URL from the redirect chain
-    res.body?.cancel()
-    return res.url || url
+    const finalUrl = res.url || url
+    const contentType = res.headers.get('content-type') ?? ''
+    if (!res.ok || !contentType.includes('text/html')) {
+      res.body?.cancel()
+      return { finalUrl, data: {} }
+    }
+
+    // Stream the body until we hit </head> or 30 KB
+    const reader = res.body?.getReader()
+    if (!reader) return { finalUrl, data: {} }
+    const decoder = new TextDecoder()
+    let html = ''
+    while (html.length < 30000) {
+      const { done, value } = await reader.read()
+      if (done) break
+      html += decoder.decode(value, { stream: true })
+      if (html.toLowerCase().includes('</head>')) break
+    }
+    reader.cancel()
+
+    const rawTitle = extractMetaTag(html, 'og:title')
+      || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? '')
+    const description = extractMetaTag(html, 'og:description', 'description')
+    const thumbnail  = extractMetaTag(html, 'og:image')
+    const author     = extractMetaTag(html, 'og:site_name')
+
+    // Strip platform suffixes from titles (e.g. "... | TikTok", "... • Instagram")
+    const title = rawTitle
+      .replace(/\s*[|•·]\s*(TikTok|Instagram|YouTube).*$/i, '')
+      .replace(/\s*on TikTok$/i, '')
+      .trim()
+
+    return {
+      finalUrl,
+      data: {
+        title:         title       || undefined,
+        description:   description || undefined,
+        thumbnail_url: thumbnail   || undefined,
+        author_name:   author      || undefined,
+      },
+    }
   } catch {
-    return url
+    return { finalUrl: url, data: {} }
   }
 }
-
-// --- oEmbed fetching ---
-// Tries the original URL first, then the resolved canonical URL as a fallback.
 
 async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbedData> {
   let oembedUrl = ''
@@ -68,9 +120,7 @@ async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbed
   }
   if (!oembedUrl) return {}
   try {
-    const res = await fetch(oembedUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' },
-    })
+    const res = await fetch(oembedUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ReelRoam/1.0)' } })
     if (!res.ok) return {}
     return await res.json()
   } catch {
@@ -78,21 +128,24 @@ async function tryOEmbedUrl(targetUrl: string, platform: string): Promise<OEmbed
   }
 }
 
-async function fetchOEmbed(url: string, platform: string): Promise<{ data: OEmbedData; resolvedUrl: string }> {
-  // 1. Try oEmbed with the original URL
+async function fetchVideoMeta(url: string, platform: string): Promise<{ data: OEmbedData; resolvedUrl: string }> {
+  // 1. Try oEmbed with the original URL (fast path — works for YouTube and some TikTok URLs)
   const direct = await tryOEmbedUrl(url, platform)
   if (direct.title || direct.description) return { data: direct, resolvedUrl: url }
 
-  // 2. Follow redirects to get canonical URL, then retry oEmbed
-  const resolvedUrl = await resolveUrl(url)
-  if (resolvedUrl !== url) {
-    const resolved = await tryOEmbedUrl(resolvedUrl, platform)
-    if (resolved.title || resolved.description) return { data: resolved, resolvedUrl }
-    // Even if oEmbed still fails, return the resolved URL so Claude gets the canonical form
-    return { data: direct, resolvedUrl }
+  // 2. Scrape the page directly — follows redirects (resolves vm.tiktok.com etc.)
+  //    and extracts OG meta tags. Works even when the oEmbed API is blocked.
+  const { finalUrl, data: pageMeta } = await fetchPageMeta(url)
+  if (pageMeta.title || pageMeta.description) return { data: pageMeta, resolvedUrl: finalUrl }
+
+  // 3. If page scraping got the resolved URL but no useful data, try oEmbed once more
+  //    with the canonical URL (e.g. after vm.tiktok.com → tiktok.com/@user/video/ID)
+  if (finalUrl !== url) {
+    const resolved = await tryOEmbedUrl(finalUrl, platform)
+    if (resolved.title || resolved.description) return { data: resolved, resolvedUrl: finalUrl }
   }
 
-  return { data: direct, resolvedUrl: url }
+  return { data: {}, resolvedUrl: finalUrl }
 }
 
 // --- Claude API call ---
@@ -166,7 +219,7 @@ function parseLocations(raw: string): ExtractResult {
 // --- Text extraction ---
 
 async function extractWithText(url: string, platform: string): Promise<ExtractResult> {
-  const { data: oembed, resolvedUrl } = await fetchOEmbed(url, platform)
+  const { data: oembed, resolvedUrl } = await fetchVideoMeta(url, platform)
 
   const hasMetadata = !!(oembed.title || oembed.description || oembed.author_name)
 
@@ -229,7 +282,7 @@ async function getVideoImages(url: string, platform: string): Promise<string[]> 
       )
     }
   } else {
-    const { data: oembed } = await fetchOEmbed(url, platform)
+    const { data: oembed } = await fetchVideoMeta(url, platform)
     if (oembed.thumbnail_url) images.push(oembed.thumbnail_url)
   }
 
