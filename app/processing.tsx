@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
 import { getOrCreateDeviceId } from '../lib/deviceId';
+import { getProStatusAsync, incrementTripCount } from '../hooks/useProStatus';
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -76,7 +77,17 @@ export default function ProcessingScreen() {
       try {
         // Step 0: Detect platform
         advanceTo(0);
-        const device_id = await getOrCreateDeviceId();
+        const [device_id, proStatus] = await Promise.all([
+          getOrCreateDeviceId(),
+          getProStatusAsync(),
+        ]);
+
+        // Client-side rate limit gate (server also enforces this)
+        if (!proStatus.isPro && proStatus.tripsRemaining === 0) {
+          router.replace({ pathname: '/upgrade', params: { reason: 'rate_limit' } });
+          return;
+        }
+
         await new Promise((r) => setTimeout(r, 500));
 
         // Step 1: Fetch video metadata (happens inside extractLocations)
@@ -102,8 +113,9 @@ export default function ProcessingScreen() {
           platform: platformStr,
         });
 
-        // Step 4: Done — navigate to trip
+        // Step 4: Done — increment local count and navigate to trip
         advanceTo(4);
+        await incrementTripCount();
         Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start(() => {
           setIsDone(true);
           setTimeout(() => { router.replace({ pathname: '/trip/[slug]', params: { slug } }); }, 400);

@@ -13,6 +13,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Trip } from '../types';
 import { useRecentTrips } from '../hooks/useRecentTrips';
+import { FREE_TRIP_LIMIT, useProStatus } from '../hooks/useProStatus';
 
 // ─── Platform detection ───────────────────────────────────────────────────────
 
@@ -173,12 +174,17 @@ function TripCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
 export default function HomeScreen() {
   const router = useRouter();
   const { trips, isLoading } = useRecentTrips();
+  const { isPro, tripsRemaining, isLoaded } = useProStatus();
   const [inputUrl, setInputUrl] = useState('');
   const detectedPlatform = detectPlatform(inputUrl);
 
   function handleGenerate() {
     const platform = detectPlatform(inputUrl);
     if (!inputUrl.trim() || !platform) return;
+    if (isLoaded && !isPro && tripsRemaining === 0) {
+      router.push({ pathname: '/upgrade', params: { reason: 'rate_limit' } } as any);
+      return;
+    }
     router.push({ pathname: '/processing', params: { url: inputUrl.trim(), platform } });
   }
 
@@ -321,24 +327,37 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* ── Upgrade banner ── */}
-      <TouchableOpacity
-        onPress={() => router.push('/upgrade' as any)}
-        activeOpacity={0.85}
-        className="mx-5 mb-4 rounded-2xl overflow-hidden"
-        style={{ backgroundColor: '#0D9488' }}
-      >
-        <View className="flex-row items-center justify-between px-5 py-3">
-          <View className="flex-row items-center gap-2">
-            <Ionicons name="sparkles" size={16} color="white" />
-            <Text className="text-white text-sm">
-              <Text className="font-semibold">3 free trips/month</Text>
-              {'  ·  '}Upgrade to Pro
-            </Text>
+      {/* ── Upgrade banner (hidden for Pro users) ── */}
+      {!isPro && (
+        <TouchableOpacity
+          onPress={() => router.push('/upgrade' as any)}
+          activeOpacity={0.85}
+          className="mx-5 mb-4 rounded-2xl overflow-hidden"
+          style={{ backgroundColor: tripsRemaining === 0 ? '#DC2626' : '#0D9488' }}
+        >
+          <View className="flex-row items-center justify-between px-5 py-3">
+            <View className="flex-row items-center gap-2">
+              <Ionicons name="sparkles" size={16} color="white" />
+              {isLoaded ? (
+                <Text className="text-white text-sm">
+                  <Text className="font-semibold">
+                    {tripsRemaining === 0
+                      ? 'No free trips remaining'
+                      : `${tripsRemaining} free ${tripsRemaining === 1 ? 'trip' : 'trips'} remaining this month`}
+                  </Text>
+                  {'  ·  '}Upgrade to Pro
+                </Text>
+              ) : (
+                <Text className="text-white text-sm">
+                  <Text className="font-semibold">{FREE_TRIP_LIMIT} free trips/month</Text>
+                  {'  ·  '}Upgrade to Pro
+                </Text>
+              )}
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
           </View>
-          <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 }
