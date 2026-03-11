@@ -13,8 +13,8 @@ ReelRoam lets users share a TikTok, Instagram, or YouTube URL directly to the ap
 ## Tech Stack
 | Tool | Version | Purpose |
 |---|---|---|
-| Expo | ~55.0.6 | Build framework |
-| Expo Router | ~55.0.5 | File-based navigation |
+| Expo | ~54.0.0 | Build framework |
+| Expo Router | ~6.0.23 | File-based navigation |
 | TypeScript | ~5.9.2 | Type safety |
 | NativeWind | ^4.2.2 | Tailwind CSS styling |
 | Tailwind CSS | ^3.4.x | Utility classes (v3, not v4) |
@@ -113,7 +113,7 @@ No prefix = server/edge function only.
 3. **All Supabase calls** go through `lib/supabase.ts` — import the singleton `supabase` client
 4. **Never expose server-side keys** client-side — `ANTHROPIC_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server/edge function only
 5. **Commit to GitHub** after each working feature: `git add`, `git commit`, `git push`
-6. **Install packages** with `--legacy-peer-deps` due to known react-dom peer dep conflict in Expo 55
+6. **Install packages** with `--legacy-peer-deps` due to known react-dom peer dep conflict in Expo 54
 7. **Tailwind must stay at v3** — NativeWind v4 is incompatible with Tailwind v4
 
 ## Expo / EAS Config

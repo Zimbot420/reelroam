@@ -99,7 +99,7 @@ export default function ProcessingScreen() {
 
   const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const platformMeta = platform ? PLATFORM_META[platform] : null;
-  const shortUrl = url ? url.replace(/^https?://(www.)?/, '').slice(0, 45) : '';
+  const shortUrl = url ? url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
 
   if (error) {
     return (
