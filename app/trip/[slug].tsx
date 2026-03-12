@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -229,6 +230,7 @@ export default function TripDetailScreen() {
 
   async function handleShare() {
     if (!trip) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       await Share.share({
         message: `Check out this trip I planned with ReelRoam!\n\n${trip.itinerary?.title ?? trip.title}\n\nreelroam://trip/${slug}`,

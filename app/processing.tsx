@@ -4,6 +4,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import MapView, { Marker } from 'react-native-maps';
 import LottieView from 'lottie-react-native';
 import { extractLocations } from '../lib/api/extract';
@@ -125,6 +126,7 @@ export default function ProcessingScreen() {
   // ── Ready overlay entrance ───────────────────────────────────────────
   useEffect(() => {
     if (!showReady) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Animated.parallel([
       Animated.spring(readyScale,   { toValue: 1, useNativeDriver: true, tension: 80, friction: 7 }),
       Animated.timing(readyOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
@@ -320,6 +322,7 @@ export default function ProcessingScreen() {
           router.replace({ pathname: '/upgrade', params: { reason: 'rate_limit' } });
           return;
         }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setError(
           message.includes('Failed to save')
             ? 'We could not save your trip. Please check your connection and try again.'

@@ -6,11 +6,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { Trip } from '../types';
 import { useRecentTrips } from '../hooks/useRecentTrips';
 import { FREE_TRIP_LIMIT, useProStatus } from '../hooks/useProStatus';
@@ -107,6 +107,35 @@ function StepAnimation() {
   );
 }
 
+// ─── Skeleton card ────────────────────────────────────────────────────────────
+
+function SkeletonShimmer({ width, height, borderRadius = 10 }: { width: string | number; height: number; borderRadius?: number }) {
+  const opacity = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return <Animated.View style={{ opacity, width, height, borderRadius, backgroundColor: '#E5E7EB', marginBottom: 6 }} />;
+}
+
+function TripCardSkeleton() {
+  return (
+    <View className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
+      <View className="flex-row items-center justify-between">
+        <View className="flex-1 mr-3">
+          <SkeletonShimmer width="70%" height={16} />
+          <SkeletonShimmer width="45%" height={12} />
+        </View>
+        <SkeletonShimmer width={28} height={28} borderRadius={8} />
+      </View>
+    </View>
+  );
+}
+
 // ─── Trip card ────────────────────────────────────────────────────────────────
 
 function TripCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
@@ -178,10 +207,19 @@ export default function HomeScreen() {
   const { isPro, tripsRemaining, isLoaded } = useProStatus();
   const [inputUrl, setInputUrl] = useState('');
   const detectedPlatform = detectPlatform(inputUrl);
+  const btnScale = useRef(new Animated.Value(1)).current;
+
+  function pressIn() {
+    Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 30 }).start();
+  }
+  function pressOut() {
+    Animated.spring(btnScale, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+  }
 
   function handleGenerate() {
     const platform = detectPlatform(inputUrl);
     if (!inputUrl.trim() || !platform) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // TODO: re-enable rate limit gate before launch
     // if (isLoaded && !isPro && tripsRemaining === 0) {
     //   router.push({ pathname: '/upgrade', params: { reason: 'rate_limit' } } as any);
@@ -270,28 +308,32 @@ export default function HomeScreen() {
               onSubmitEditing={handleGenerate}
             />
             {inputUrl.length > 0 && (
-              <TouchableOpacity onPress={() => setInputUrl('')}>
+              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setInputUrl(''); }}>
                 <Ionicons name="close-circle" size={18} color="#9CA3AF" />
               </TouchableOpacity>
             )}
           </View>
 
-          <TouchableOpacity
-            onPress={handleGenerate}
-            disabled={!detectedPlatform}
-            activeOpacity={0.8}
-            className="mt-3 h-13 rounded-2xl items-center justify-center"
-            style={{
-              backgroundColor: detectedPlatform ? '#0D9488' : '#E5E7EB',
-            }}
-          >
-            <Text
-              className="font-semibold text-base"
-              style={{ color: detectedPlatform ? 'white' : '#9CA3AF' }}
+          <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+            <TouchableOpacity
+              onPress={handleGenerate}
+              onPressIn={pressIn}
+              onPressOut={pressOut}
+              disabled={!detectedPlatform}
+              activeOpacity={0.9}
+              className="mt-3 h-13 rounded-2xl items-center justify-center"
+              style={{
+                backgroundColor: detectedPlatform ? '#0D9488' : '#E5E7EB',
+              }}
             >
-              Generate Trip
-            </Text>
-          </TouchableOpacity>
+              <Text
+                className="font-semibold text-base"
+                style={{ color: detectedPlatform ? 'white' : '#9CA3AF' }}
+              >
+                Generate Trip
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
         </View>
 
         {/* ── Recent trips ── */}
@@ -299,20 +341,24 @@ export default function HomeScreen() {
           <Text className="text-lg font-bold text-gray-900 mb-4">Your Recent Trips</Text>
 
           {isLoading ? (
-            <ActivityIndicator color="#0D9488" />
+            <>
+              <TripCardSkeleton />
+              <TripCardSkeleton />
+              <TripCardSkeleton />
+            </>
           ) : trips.length === 0 ? (
-            <View className="bg-gray-50 rounded-2xl px-5 py-8 items-center">
+            <View className="bg-gray-50 rounded-2xl px-5 py-10 items-center">
               <View
                 className="w-14 h-14 rounded-full items-center justify-center mb-3"
                 style={{ backgroundColor: '#CCFBF1' }}
               >
                 <Ionicons name="map-outline" size={28} color="#0D9488" />
               </View>
-              <Text className="text-gray-700 font-medium text-center">
+              <Text className="text-gray-700 font-semibold text-center text-base">
                 No trips yet
               </Text>
-              <Text className="text-gray-400 text-sm text-center mt-1">
-                Your generated trips will appear here
+              <Text className="text-gray-400 text-sm text-center mt-1 leading-relaxed">
+                Share a travel video from TikTok, Instagram, or YouTube to generate your first trip
               </Text>
             </View>
           ) : (
@@ -332,7 +378,7 @@ export default function HomeScreen() {
       {/* ── Upgrade banner (hidden for Pro users) ── */}
       {!isPro && (
         <TouchableOpacity
-          onPress={() => router.push('/upgrade' as any)}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/upgrade' as any); }}
           activeOpacity={0.85}
           className="mx-5 mb-4 rounded-2xl overflow-hidden"
           style={{ backgroundColor: tripsRemaining === 0 ? '#DC2626' : '#0D9488' }}
