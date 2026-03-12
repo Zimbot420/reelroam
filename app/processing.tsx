@@ -57,32 +57,29 @@ export default function ProcessingScreen() {
   const pinScale = useRef(new Animated.Value(0)).current;
 
   const mapRef = useRef<MapView>(null);
-  const panLngRef = useRef(0);
-  const panIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const panActiveRef = useRef(true);
+  const headingRef = useRef(0);
+  const spinIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const spinActiveRef = useRef(true);
 
-  // Globe slow-pan: start after map mounts, rotate longitude every 3s
+  // Globe spin: increment heading by 0.5° every 50ms for smooth continuous rotation
   useEffect(() => {
-    const startDelay = setTimeout(() => {
-      panIntervalRef.current = setInterval(() => {
-        if (!panActiveRef.current) return;
-        panLngRef.current = (panLngRef.current + 35) % 360;
-        mapRef.current?.animateCamera(
-          {
-            center: { latitude: 20, longitude: panLngRef.current },
-            pitch: 0,
-            heading: 0,
-            altitude: 20_000_000,
-            zoom: 1,
-          },
-          { duration: 2800 },
-        );
-      }, 3200);
-    }, 1200);
+    spinIntervalRef.current = setInterval(() => {
+      if (!spinActiveRef.current) return;
+      headingRef.current = (headingRef.current + 0.5) % 360;
+      mapRef.current?.animateCamera(
+        {
+          center: { latitude: 20, longitude: 0 },
+          pitch: 0,
+          heading: headingRef.current,
+          altitude: 20_000_000,
+          zoom: 1,
+        },
+        { duration: 50 },
+      );
+    }, 50);
 
     return () => {
-      clearTimeout(startDelay);
-      if (panIntervalRef.current) clearInterval(panIntervalRef.current);
+      if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
     };
   }, []);
 
@@ -161,7 +158,8 @@ export default function ProcessingScreen() {
         if (extraction.region && apiKey) {
           const coords = await geocodeRegion(extraction.region, apiKey);
           if (coords) {
-            panActiveRef.current = false;
+            spinActiveRef.current = false;
+            if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
             setStatus('Found it! Building your itinerary...');
             mapRef.current?.animateCamera(
               {
@@ -252,44 +250,46 @@ export default function ProcessingScreen() {
     <Animated.View style={{ flex: 1, backgroundColor: '#000', opacity: screenOpacity }}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Full-screen globe map */}
-      <MapView
-        ref={mapRef}
-        style={{ flex: 1 }}
-        mapType="hybrid"
-        scrollEnabled={false}
-        zoomEnabled={false}
-        rotateEnabled={false}
-        pitchEnabled={false}
-        initialCamera={{
-          center: { latitude: 20, longitude: 0 },
-          pitch: 0,
-          heading: 0,
-          altitude: 20_000_000,
-          zoom: 1,
-        }}
-      >
-        {showPin && destCoords && (
-          <Marker coordinate={{ latitude: destCoords.lat, longitude: destCoords.lng }}>
-            <Animated.View style={{ transform: [{ scale: pinScale }] }}>
-              <View style={{
-                width: 44, height: 44, borderRadius: 22,
-                backgroundColor: '#0D9488', borderWidth: 3, borderColor: 'white',
-                alignItems: 'center', justifyContent: 'center',
-                shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, elevation: 10,
-              }}>
-                <Ionicons name="location" size={22} color="white" />
-              </View>
-            </Animated.View>
-          </Marker>
-        )}
-      </MapView>
+      {/* Globe map — 60% of screen height */}
+      <View style={{ flex: 6 }}>
+        <MapView
+          ref={mapRef}
+          style={{ flex: 1 }}
+          mapType="hybrid"
+          scrollEnabled={false}
+          zoomEnabled={false}
+          rotateEnabled={false}
+          pitchEnabled={false}
+          initialCamera={{
+            center: { latitude: 20, longitude: 0 },
+            pitch: 0,
+            heading: 0,
+            altitude: 20_000_000,
+            zoom: 1,
+          }}
+        >
+          {showPin && destCoords && (
+            <Marker coordinate={{ latitude: destCoords.lat, longitude: destCoords.lng }}>
+              <Animated.View style={{ transform: [{ scale: pinScale }] }}>
+                <View style={{
+                  width: 44, height: 44, borderRadius: 22,
+                  backgroundColor: '#0D9488', borderWidth: 3, borderColor: 'white',
+                  alignItems: 'center', justifyContent: 'center',
+                  shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, elevation: 10,
+                }}>
+                  <Ionicons name="location" size={22} color="white" />
+                </View>
+              </Animated.View>
+            </Marker>
+          )}
+        </MapView>
+      </View>
 
-      {/* Status panel overlaid at the bottom */}
+      {/* Status panel — 40% of screen height */}
       <View style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0,
-        backgroundColor: 'rgba(0,0,0,0.82)',
-        paddingHorizontal: 24, paddingTop: 18, paddingBottom: 44,
+        flex: 4,
+        backgroundColor: '#0D0D0D',
+        paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40,
         borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
       }}>
         {/* Progress bar */}
