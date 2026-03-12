@@ -28,7 +28,7 @@ const PLATFORM_META = {
   youtube:   { label: 'YouTube',   icon: 'logo-youtube',  color: '#FF0000' },
 };
 
-const SLIDE_DISPLAY_MS = 1800; // ms each image is fully visible
+const SLIDE_DISPLAY_MS = 2200; // ms each image is fully visible
 const MAP_ZOOM_WAIT_MS = 4200; // ms to wait for map zoom + brief destination view
 
 async function geocodeRegion(
@@ -369,7 +369,7 @@ export default function ProcessingScreen() {
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* ── LAYER 1: Map (hidden at start, fades in during Phase 2) ── */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%', opacity: mapOpacity }}>
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: '28%', opacity: mapOpacity }}>
         <MapView
           ref={mapRef}
           style={{ flex: 1 }}
@@ -399,7 +399,7 @@ export default function ProcessingScreen() {
 
       {/* ── LAYER 2: Lottie globe (Phase 1, fades out when destination found) ── */}
       <Animated.View style={{
-        position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: '28%',
         alignItems: 'center', justifyContent: 'center',
         opacity: lottieOpacity,
       }}>
@@ -414,7 +414,7 @@ export default function ProcessingScreen() {
 
       {/* ── LAYER 3: Slideshow (Phase 3, fades in after map zoom) ── */}
       <Animated.View style={{
-        position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: '28%',
         overflow: 'hidden',
         opacity: slideshowOpacity,
       }}>
@@ -445,7 +445,7 @@ export default function ProcessingScreen() {
       {/* ── LAYER 4: "Your trip is ready!" overlay ── */}
       {showReady && (
         <View style={{
-          position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: '28%',
           alignItems: 'center', justifyContent: 'center',
           backgroundColor: 'rgba(0,0,0,0.5)',
         }}>
@@ -462,9 +462,9 @@ export default function ProcessingScreen() {
         </View>
       )}
 
-      {/* ── STATUS PANEL — bottom 40% ── */}
+      {/* ── STATUS PANEL — bottom 28% ── */}
       <View style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%',
+        position: 'absolute', bottom: 0, left: 0, right: 0, height: '28%',
         backgroundColor: '#0D0D0D',
         paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40,
         borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',

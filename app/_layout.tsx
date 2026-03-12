@@ -5,6 +5,7 @@ import { ToastAndroid, Platform, Alert } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { useShareIntent } from '../hooks/useShareIntent';
+import { initializePurchases } from '../lib/purchases';
 
 function ShareIntentHandler() {
   const router = useRouter();
@@ -33,6 +34,10 @@ function ShareIntentHandler() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    initializePurchases()
+  }, [])
+
   return (
     <ShareIntentProvider>
       <ShareIntentHandler />

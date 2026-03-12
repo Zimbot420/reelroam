@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { getProStatus } from '../lib/purchases'
 
 export const FREE_TRIP_LIMIT = 3
 
@@ -73,10 +74,19 @@ export function useProStatus(): ProStatus {
   const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
-    getProStatusAsync().then((d) => {
-      setData(d)
+    async function load() {
+      // Load from AsyncStorage first for instant display
+      const local = await getProStatusAsync()
+      setData(local)
       setIsLoaded(true)
-    })
+      // Then sync with RevenueCat and update if different
+      const rcIsPro = await getProStatus()
+      if (rcIsPro !== local.isPro) {
+        const updated = await getProStatusAsync()
+        setData(updated)
+      }
+    }
+    load()
   }, [])
 
   const increment = useCallback(async () => {

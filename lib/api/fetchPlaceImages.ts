@@ -13,8 +13,8 @@ async function fetchPhotosForLocation(name: string, apiKey: string): Promise<Sli
     if (!res.ok) return []
     const data = await res.json()
     const photos: Array<{ photo_reference: string }> = data.results?.[0]?.photos ?? []
-    return photos.slice(0, 3).map((p) => ({
-      url: `${PLACES_BASE}/photo?maxwidth=800&photo_reference=${p.photo_reference}&key=${apiKey}`,
+    return photos.slice(0, 5).map((p) => ({
+      url: `${PLACES_BASE}/photo?maxwidth=1600&photo_reference=${p.photo_reference}&key=${apiKey}`,
       locationName: name,
     }))
   } catch {
@@ -28,8 +28,8 @@ export async function fetchPlaceImages(
   apiKey: string,
 ): Promise<SlideImage[]> {
   if (!apiKey) return []
-  // Query region + up to 4 individual location names in parallel
-  const names = [region, ...locationNames.slice(0, 4)].filter(Boolean)
+  // Query region + up to 7 individual location names in parallel
+  const names = [region, ...locationNames.slice(0, 7)].filter(Boolean)
   const results = await Promise.all(names.map((n) => fetchPhotosForLocation(n, apiKey)))
-  return results.flat().slice(0, 12)
+  return results.flat().slice(0, 40)
 }

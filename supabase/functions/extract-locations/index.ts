@@ -345,17 +345,19 @@ Deno.serve(async (req) => {
       )
     }
 
+    // TODO: re-enable rate limit before launch
     // Rate limit check (free tier: 3 trips/month)
-    if (method !== 'vision') {
-      const limited = await isRateLimited(device_id)
-      console.log('[extract-locations] rate limited:', limited)
-      if (limited) {
-        return new Response(
-          JSON.stringify({ error: 'RATE_LIMIT_EXCEEDED' }),
-          { status: 429, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } },
-        )
-      }
-    }
+    // if (method !== 'vision') {
+    //   const limited = await isRateLimited(device_id)
+    //   console.log('[extract-locations] rate limited:', limited)
+    //   if (limited) {
+    //     return new Response(
+    //       JSON.stringify({ error: 'RATE_LIMIT_EXCEEDED' }),
+    //       { status: 429, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } },
+    //     )
+    //   }
+    // }
+    console.log('[extract-locations] rate limited: false (disabled for testing)')
 
     console.log('[extract-locations] starting extraction for:', url)
     const result =

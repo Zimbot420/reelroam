@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { purchasePro, restorePurchases } from '../lib/purchases';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -92,11 +93,39 @@ export default function UpgradeScreen() {
   const router = useRouter();
   const { reason } = useLocalSearchParams<{ reason?: string }>();
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const copy = reason ? REASON_COPY[reason] : null;
 
-  function handleUpgrade() {
-    setToastVisible(true);
+  function showToast(message: string) {
+    setToastMessage(message);
+    setToastVisible(false);
+    setTimeout(() => setToastVisible(true), 50);
+  }
+
+  async function handleUpgrade() {
+    setLoading(true);
+    const result = await purchasePro();
+    setLoading(false);
+    if (result.success) {
+      router.replace('/');
+    } else if (result.error && result.error !== 'cancelled') {
+      showToast('Purchase failed. Please try again.');
+    }
+  }
+
+  async function handleRestore() {
+    setRestoring(true);
+    const result = await restorePurchases();
+    setRestoring(false);
+    if (result.isPro) {
+      showToast('Pro restored successfully!');
+      setTimeout(() => router.replace('/'), 1500);
+    } else {
+      showToast('No active subscription found.');
+    }
   }
 
   function handleMaybeLater() {
@@ -197,22 +226,32 @@ export default function UpgradeScreen() {
         <View className="px-5">
           <TouchableOpacity
             onPress={handleUpgrade}
+            disabled={loading}
             activeOpacity={0.85}
             className="h-14 rounded-2xl items-center justify-center mb-3"
-            style={{ backgroundColor: '#0D9488' }}
+            style={{ backgroundColor: '#0D9488', opacity: loading ? 0.7 : 1 }}
           >
-            <View className="flex-row items-center gap-2">
-              <Ionicons name="sparkles" size={18} color="white" />
-              <Text className="text-white font-bold text-base">Upgrade to Pro</Text>
-            </View>
+            {loading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <View className="flex-row items-center gap-2">
+                <Ionicons name="sparkles" size={18} color="white" />
+                <Text className="text-white font-bold text-base">Upgrade to Pro</Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={handleUpgrade}
+            onPress={handleRestore}
+            disabled={restoring}
             activeOpacity={0.7}
             className="h-10 items-center justify-center mb-2"
           >
-            <Text className="text-gray-400 text-sm">Restore Purchases</Text>
+            {restoring ? (
+              <ActivityIndicator size="small" color="#9CA3AF" />
+            ) : (
+              <Text className="text-gray-400 text-sm">Restore Purchases</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -225,7 +264,7 @@ export default function UpgradeScreen() {
         </View>
       </ScrollView>
 
-      <Toast message="Payments coming soon! 🎉" visible={toastVisible} />
+      <Toast message={toastMessage} visible={toastVisible} />
     </SafeAreaView>
   );
 }

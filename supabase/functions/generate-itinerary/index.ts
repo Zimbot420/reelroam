@@ -1,4 +1,3 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const CORS_HEADERS = {
@@ -40,7 +39,7 @@ async function callClaude(prompt: string, system: string): Promise<string> {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+      max_tokens: 8192,
       system,
       messages: [{ role: 'user', content: prompt }],
     }),
@@ -77,7 +76,7 @@ function parseItinerary(raw: string): object {
 
 // --- Main handler ---
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS })
   }
