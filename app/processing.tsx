@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
+import LottieView from 'lottie-react-native';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
 import { getOrCreateDeviceId } from '../lib/deviceId';
@@ -50,40 +51,22 @@ export default function ProcessingScreen() {
   const [error, setError] = useState<string | null>(null);
   const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [showPin, setShowPin] = useState(false);
+  const [showReady, setShowReady] = useState(false);
 
-  const progressAnim = useRef(new Animated.Value(0)).current;
+  // Animation values
+  const progressAnim   = useRef(new Animated.Value(0)).current;
   const messageOpacity = useRef(new Animated.Value(1)).current;
-  const screenOpacity = useRef(new Animated.Value(1)).current;
-  const pinScale = useRef(new Animated.Value(0)).current;
+  const screenOpacity  = useRef(new Animated.Value(1)).current;
+  const lottieOpacity  = useRef(new Animated.Value(1)).current;
+  const mapOpacity     = useRef(new Animated.Value(0)).current;
+  const pinScale       = useRef(new Animated.Value(0)).current;
+  const readyScale     = useRef(new Animated.Value(0.6)).current;
+  const readyOpacity   = useRef(new Animated.Value(0)).current;
 
-  const mapRef = useRef<MapView>(null);
-  const headingRef = useRef(0);
-  const spinIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const spinActiveRef = useRef(true);
+  const mapRef    = useRef<MapView>(null);
+  const lottieRef = useRef<LottieView>(null);
 
-  // Globe spin: increment heading by 0.5° every 50ms for smooth continuous rotation
-  useEffect(() => {
-    spinIntervalRef.current = setInterval(() => {
-      if (!spinActiveRef.current) return;
-      headingRef.current = (headingRef.current + 0.5) % 360;
-      mapRef.current?.animateCamera(
-        {
-          center: { latitude: 20, longitude: 0 },
-          pitch: 0,
-          heading: headingRef.current,
-          altitude: 20_000_000,
-          zoom: 1,
-        },
-        { duration: 50 },
-      );
-    }, 50);
-
-    return () => {
-      if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-    };
-  }, []);
-
-  // Pin spring pop when shown
+  // Pin spring pop
   useEffect(() => {
     if (!showPin) return;
     Animated.spring(pinScale, {
@@ -93,6 +76,15 @@ export default function ProcessingScreen() {
       friction: 6,
     }).start();
   }, [showPin]);
+
+  // "Your trip is ready!" entrance animation
+  useEffect(() => {
+    if (!showReady) return;
+    Animated.parallel([
+      Animated.spring(readyScale,   { toValue: 1, useNativeDriver: true, tension: 80, friction: 7 }),
+      Animated.timing(readyOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [showReady]);
 
   function animateMessage(next: () => void) {
     Animated.timing(messageOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
@@ -117,10 +109,35 @@ export default function ProcessingScreen() {
     animateMessage(() => setStatusMessage(msg));
   }
 
+  // Phase 2: cross-fade Lottie → Map, then zoom camera
+  function transitionToMap(coords: { lat: number; lng: number }) {
+    // Cross-fade
+    Animated.parallel([
+      Animated.timing(lottieOpacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+      Animated.timing(mapOpacity,    { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+
+    // Zoom camera shortly after fade begins
+    setTimeout(() => {
+      mapRef.current?.animateCamera(
+        {
+          center: { latitude: coords.lat, longitude: coords.lng },
+          pitch: 45,
+          heading: 0,
+          altitude: 50_000,
+          zoom: 11,
+        },
+        { duration: 3000 },
+      );
+      // Show pin when zoom completes
+      setTimeout(() => setShowPin(true), 3100);
+    }, 200);
+  }
+
   useEffect(() => {
     if (!url || !platform) { setError('No URL provided.'); return; }
 
-    const urlStr = Array.isArray(url) ? url[0] : url;
+    const urlStr    = Array.isArray(url)      ? url[0]      : url;
     const platformStr = (Array.isArray(platform) ? platform[0] : platform) as 'tiktok' | 'instagram' | 'youtube';
 
     async function run() {
@@ -153,30 +170,19 @@ export default function ProcessingScreen() {
         //   return;
         // }
 
-        // Phase 2: zoom the globe to the destination
+        // Phase 2: geocode destination and transition from Lottie to map
         const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
         if (extraction.region && apiKey) {
           const coords = await geocodeRegion(extraction.region, apiKey);
           if (coords) {
-            spinActiveRef.current = false;
-            if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
-            setStatus('Found it! Building your itinerary...');
-            mapRef.current?.animateCamera(
-              {
-                center: { latitude: coords.lat, longitude: coords.lng },
-                pitch: 0,
-                heading: 0,
-                altitude: 50_000,
-                zoom: 11,
-              },
-              { duration: 2500 },
-            );
+            const shortName = extraction.region.split(',')[0];
+            setStatus(`Found ${shortName}! Building your itinerary...`);
             setDestCoords(coords);
-            setTimeout(() => setShowPin(true), 2600);
+            transitionToMap(coords);
           }
         }
 
-        // Step 3: Generate itinerary (runs while zoom is animating)
+        // Step 3: Generate itinerary (runs while map zoom is animating)
         advanceTo(3);
         const { slug } = await generateItinerary({
           ...extraction,
@@ -191,11 +197,14 @@ export default function ProcessingScreen() {
         await incrementTripCount();
         Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
 
+        // Phase 3: "Your trip is ready!" then navigate
+        setShowReady(true);
         setTimeout(() => {
           Animated.timing(screenOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
             router.replace({ pathname: '/trip/[slug]', params: { slug } });
           });
-        }, 600);
+        }, 800);
+
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : '';
         if (message === 'RATE_LIMIT_EXCEEDED') {
@@ -215,10 +224,10 @@ export default function ProcessingScreen() {
   }, []);
 
   const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const platformStr = platform ? (Array.isArray(platform) ? platform[0] : platform) : null;
-  const urlStr = url ? (Array.isArray(url) ? url[0] : url) : '';
-  const platformMeta = platformStr ? PLATFORM_META[platformStr] : null;
-  const shortUrl = urlStr ? urlStr.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
+  const platformStr   = platform ? (Array.isArray(platform) ? platform[0] : platform) : null;
+  const urlStr        = url ? (Array.isArray(url) ? url[0] : url) : '';
+  const platformMeta  = platformStr ? PLATFORM_META[platformStr] : null;
+  const shortUrl      = urlStr ? urlStr.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
 
   if (error) {
     return (
@@ -247,11 +256,16 @@ export default function ProcessingScreen() {
   }
 
   return (
-    <Animated.View style={{ flex: 1, backgroundColor: '#000', opacity: screenOpacity }}>
+    <Animated.View style={{ flex: 1, backgroundColor: '#0a0a0a', opacity: screenOpacity }}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Globe map — 60% of screen height */}
-      <View style={{ flex: 6 }}>
+      {/* ── LAYER 1: Map (always rendered, hidden behind Lottie until Phase 2) ── */}
+      <Animated.View
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+          opacity: mapOpacity,
+        }}
+      >
         <MapView
           ref={mapRef}
           style={{ flex: 1 }}
@@ -262,10 +276,10 @@ export default function ProcessingScreen() {
           pitchEnabled={false}
           initialCamera={{
             center: { latitude: 20, longitude: 0 },
-            pitch: 0,
+            pitch: 45,
             heading: 0,
-            altitude: 20_000_000,
-            zoom: 1,
+            altitude: 8_000_000,
+            zoom: 2,
           }}
         >
           {showPin && destCoords && (
@@ -283,11 +297,56 @@ export default function ProcessingScreen() {
             </Marker>
           )}
         </MapView>
-      </View>
+      </Animated.View>
 
-      {/* Status panel — 40% of screen height */}
+      {/* ── LAYER 2: Lottie globe (Phase 1, fades out when destination found) ── */}
+      <Animated.View
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+          alignItems: 'center', justifyContent: 'center',
+          opacity: lottieOpacity,
+        }}
+      >
+        <LottieView
+          ref={lottieRef}
+          source={require('../assets/animations/globe.json')}
+          autoPlay
+          loop
+          style={{ width: '90%', aspectRatio: 1 }}
+        />
+      </Animated.View>
+
+      {/* ── LAYER 3: "Your trip is ready!" overlay (Phase 3) ── */}
+      {showReady && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: '40%',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Animated.View style={{
+            alignItems: 'center',
+            transform: [{ scale: readyScale }],
+            opacity: readyOpacity,
+          }}>
+            <View style={{
+              width: 84, height: 84, borderRadius: 42,
+              backgroundColor: '#0D9488',
+              alignItems: 'center', justifyContent: 'center',
+              marginBottom: 16,
+              shadowColor: '#0D9488', shadowOpacity: 0.5,
+              shadowRadius: 24, elevation: 12,
+            }}>
+              <Ionicons name="checkmark" size={46} color="white" />
+            </View>
+            <Text style={{ color: 'white', fontSize: 22, fontWeight: '700' }}>
+              Your trip is ready!
+            </Text>
+          </Animated.View>
+        </View>
+      )}
+
+      {/* ── STATUS PANEL — bottom 40% ── */}
       <View style={{
-        flex: 4,
+        position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%',
         backgroundColor: '#0D0D0D',
         paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40,
         borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
