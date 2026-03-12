@@ -3,6 +3,7 @@ import { Animated, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import MapView, { Marker } from 'react-native-maps';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
 import { getOrCreateDeviceId } from '../lib/deviceId';
@@ -24,17 +25,20 @@ const PLATFORM_META = {
   youtube:   { label: 'YouTube',   icon: 'logo-youtube',  color: '#FF0000' },
 };
 
-function GlobeIcon({ pulseAnim }) {
-  const scale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
-  return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <View className="w-24 h-24 rounded-full items-center justify-center" style={{ backgroundColor: '#CCFBF1' }}>
-        <View className="w-20 h-20 rounded-full items-center justify-center" style={{ backgroundColor: '#0D9488' }}>
-          <Ionicons name="earth-outline" size={44} color="white" />
-        </View>
-      </View>
-    </Animated.View>
-  );
+async function geocodeRegion(
+  region: string,
+  apiKey: string,
+): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(region)}&key=${apiKey}`,
+    );
+    const json = await res.json();
+    const loc = json.results?.[0]?.geometry?.location;
+    return loc ? { lat: loc.lat, lng: loc.lng } : null;
+  } catch {
+    return null;
+  }
 }
 
 export default function ProcessingScreen() {
@@ -42,29 +46,78 @@ export default function ProcessingScreen() {
   const { url, platform } = useLocalSearchParams();
 
   const [currentStep, setCurrentStep] = useState<Step>(0);
+  const [statusMessage, setStatusMessage] = useState(STEPS[0].message);
   const [error, setError] = useState<string | null>(null);
-  const [isDone, setIsDone] = useState(false);
+  const [destCoords, setDestCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [showPin, setShowPin] = useState(false);
 
   const progressAnim = useRef(new Animated.Value(0)).current;
   const messageOpacity = useRef(new Animated.Value(1)).current;
-  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const screenOpacity = useRef(new Animated.Value(1)).current;
+  const pinScale = useRef(new Animated.Value(0)).current;
 
+  const mapRef = useRef<MapView>(null);
+  const panLngRef = useRef(0);
+  const panIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const panActiveRef = useRef(true);
+
+  // Globe slow-pan: start after map mounts, rotate longitude every 3s
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ])
-    ).start();
-    return () => pulseAnim.stopAnimation();
+    const startDelay = setTimeout(() => {
+      panIntervalRef.current = setInterval(() => {
+        if (!panActiveRef.current) return;
+        panLngRef.current = (panLngRef.current + 35) % 360;
+        mapRef.current?.animateCamera(
+          {
+            center: { latitude: 20, longitude: panLngRef.current },
+            pitch: 0,
+            heading: 0,
+            altitude: 20_000_000,
+            zoom: 1,
+          },
+          { duration: 2800 },
+        );
+      }, 3200);
+    }, 1200);
+
+    return () => {
+      clearTimeout(startDelay);
+      if (panIntervalRef.current) clearInterval(panIntervalRef.current);
+    };
   }, []);
 
-  function advanceTo(step: Step) {
+  // Pin spring pop when shown
+  useEffect(() => {
+    if (!showPin) return;
+    Animated.spring(pinScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 80,
+      friction: 6,
+    }).start();
+  }, [showPin]);
+
+  function animateMessage(next: () => void) {
     Animated.timing(messageOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
-      setCurrentStep(step);
+      next();
       Animated.timing(messageOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
     });
-    Animated.timing(progressAnim, { toValue: STEPS[step].progress, duration: 500, useNativeDriver: false }).start();
+  }
+
+  function advanceTo(step: Step) {
+    animateMessage(() => {
+      setCurrentStep(step);
+      setStatusMessage(STEPS[step].message);
+    });
+    Animated.timing(progressAnim, {
+      toValue: STEPS[step].progress,
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+  }
+
+  function setStatus(msg: string) {
+    animateMessage(() => setStatusMessage(msg));
   }
 
   useEffect(() => {
@@ -82,7 +135,6 @@ export default function ProcessingScreen() {
           getProStatusAsync(),
         ]);
 
-        // Client-side rate limit gate (server also enforces this)
         if (!proStatus.isPro && proStatus.tripsRemaining === 0) {
           router.replace({ pathname: '/upgrade', params: { reason: 'rate_limit' } });
           return;
@@ -90,11 +142,11 @@ export default function ProcessingScreen() {
 
         await new Promise((r) => setTimeout(r, 500));
 
-        // Step 1: Fetch video metadata (happens inside extractLocations)
+        // Step 1: Fetch video details
         advanceTo(1);
         await new Promise((r) => setTimeout(r, 400));
 
-        // Step 2: Extract locations via edge function
+        // Step 2: Extract locations
         advanceTo(2);
         const extraction = await extractLocations(urlStr, platformStr, device_id);
 
@@ -104,7 +156,29 @@ export default function ProcessingScreen() {
         //   return;
         // }
 
-        // Step 3: Generate itinerary (edge function also saves to Supabase)
+        // Phase 2: zoom the globe to the destination
+        const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+        if (extraction.region && apiKey) {
+          const coords = await geocodeRegion(extraction.region, apiKey);
+          if (coords) {
+            panActiveRef.current = false;
+            setStatus('Found it! Building your itinerary...');
+            mapRef.current?.animateCamera(
+              {
+                center: { latitude: coords.lat, longitude: coords.lng },
+                pitch: 0,
+                heading: 0,
+                altitude: 50_000,
+                zoom: 11,
+              },
+              { duration: 2500 },
+            );
+            setDestCoords(coords);
+            setTimeout(() => setShowPin(true), 2600);
+          }
+        }
+
+        // Step 3: Generate itinerary (runs while zoom is animating)
         advanceTo(3);
         const { slug } = await generateItinerary({
           ...extraction,
@@ -114,13 +188,16 @@ export default function ProcessingScreen() {
           platform: platformStr,
         });
 
-        // Step 4: Done — increment local count and navigate to trip
+        // Step 4: Done
         advanceTo(4);
         await incrementTripCount();
-        Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start(() => {
-          setIsDone(true);
-          setTimeout(() => { router.replace({ pathname: '/trip/[slug]', params: { slug } }); }, 400);
-        });
+        Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+
+        setTimeout(() => {
+          Animated.timing(screenOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
+            router.replace({ pathname: '/trip/[slug]', params: { slug } });
+          });
+        }, 600);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : '';
         if (message === 'RATE_LIMIT_EXCEEDED') {
@@ -154,10 +231,17 @@ export default function ProcessingScreen() {
         </View>
         <Text className="text-xl font-bold text-gray-900 text-center mb-2">Something went wrong</Text>
         <Text className="text-gray-500 text-sm text-center leading-relaxed mb-8">{error}</Text>
-        <TouchableOpacity onPress={() => router.replace({ pathname: '/', params: { prefillUrl: urlStr } })} className="w-full h-13 rounded-2xl items-center justify-center mb-3" style={{ backgroundColor: '#0D9488' }}>
+        <TouchableOpacity
+          onPress={() => router.replace({ pathname: '/', params: { prefillUrl: urlStr } })}
+          className="w-full h-13 rounded-2xl items-center justify-center mb-3"
+          style={{ backgroundColor: '#0D9488' }}
+        >
           <Text className="text-white font-semibold text-base">Try Again</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.replace('/')} className="w-full h-13 rounded-2xl items-center justify-center bg-gray-100">
+        <TouchableOpacity
+          onPress={() => router.replace('/')}
+          className="w-full h-13 rounded-2xl items-center justify-center bg-gray-100"
+        >
           <Text className="text-gray-700 font-semibold text-base">Go Home</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -165,31 +249,103 @@ export default function ProcessingScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <Animated.View style={{ flex: 1, backgroundColor: '#000', opacity: screenOpacity }}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View className="h-1 bg-gray-100 w-full">
-        <Animated.View className="h-1 rounded-full" style={{ width: progressWidth, backgroundColor: '#0D9488' }} />
-      </View>
-      <View className="flex-1 items-center justify-center px-8">
+
+      {/* Full-screen globe map */}
+      <MapView
+        ref={mapRef}
+        style={{ flex: 1 }}
+        mapType="hybrid"
+        scrollEnabled={false}
+        zoomEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        initialCamera={{
+          center: { latitude: 20, longitude: 0 },
+          pitch: 0,
+          heading: 0,
+          altitude: 20_000_000,
+          zoom: 1,
+        }}
+      >
+        {showPin && destCoords && (
+          <Marker coordinate={{ latitude: destCoords.lat, longitude: destCoords.lng }}>
+            <Animated.View style={{ transform: [{ scale: pinScale }] }}>
+              <View style={{
+                width: 44, height: 44, borderRadius: 22,
+                backgroundColor: '#0D9488', borderWidth: 3, borderColor: 'white',
+                alignItems: 'center', justifyContent: 'center',
+                shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, elevation: 10,
+              }}>
+                <Ionicons name="location" size={22} color="white" />
+              </View>
+            </Animated.View>
+          </Marker>
+        )}
+      </MapView>
+
+      {/* Status panel overlaid at the bottom */}
+      <View style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        backgroundColor: 'rgba(0,0,0,0.82)',
+        paddingHorizontal: 24, paddingTop: 18, paddingBottom: 44,
+        borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)',
+      }}>
+        {/* Progress bar */}
+        <View style={{
+          height: 2, backgroundColor: '#374151', borderRadius: 1,
+          marginBottom: 18, overflow: 'hidden',
+        }}>
+          <Animated.View style={{
+            height: 2, width: progressWidth,
+            backgroundColor: '#0D9488', borderRadius: 1,
+          }} />
+        </View>
+
+        {/* Platform chip */}
         {platformMeta && (
-          <View className="flex-row items-center gap-2 px-3 py-1.5 rounded-full mb-10" style={{ backgroundColor: platformMeta.color + '18' }}>
-            <View className="w-5 h-5 rounded-md items-center justify-center" style={{ backgroundColor: platformMeta.color }}>
-              <Ionicons name={platformMeta.icon as any} size={11} color="white" />
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingHorizontal: 10, paddingVertical: 5,
+            borderRadius: 20, marginBottom: 12, alignSelf: 'flex-start',
+            backgroundColor: platformMeta.color + '30',
+          }}>
+            <View style={{
+              width: 18, height: 18, borderRadius: 4,
+              backgroundColor: platformMeta.color,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Ionicons name={platformMeta.icon as any} size={10} color="white" />
             </View>
-            <Text className="text-xs font-medium" style={{ color: platformMeta.color }}>{platformMeta.label}</Text>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.75)' }}>
+              {platformMeta.label}
+            </Text>
           </View>
         )}
-        <GlobeIcon pulseAnim={pulseAnim} />
-        <Animated.View className="mt-10 items-center" style={{ opacity: messageOpacity }}>
-          <Text className="text-lg font-semibold text-gray-900 text-center">{isDone ? 'Done!' : STEPS[currentStep].message}</Text>
-          <Text className="text-gray-400 text-xs mt-2 text-center" numberOfLines={1}>{shortUrl}</Text>
+
+        {/* Status message */}
+        <Animated.View style={{ opacity: messageOpacity }}>
+          <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', marginBottom: 4 }}>
+            {statusMessage}
+          </Text>
+          <Text style={{ color: '#6B7280', fontSize: 12 }} numberOfLines={1}>{shortUrl}</Text>
         </Animated.View>
-        <View className="flex-row gap-1.5 mt-8">
+
+        {/* Step dots */}
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 16 }}>
           {STEPS.map((_, i) => (
-            <View key={i} className="rounded-full" style={{ width: i === currentStep ? 18 : 6, height: 6, backgroundColor: i <= currentStep ? '#0D9488' : '#E5E7EB' }} />
+            <View
+              key={i}
+              style={{
+                height: 6, borderRadius: 3,
+                width: i === currentStep ? 18 : 6,
+                backgroundColor: i <= currentStep ? '#0D9488' : '#374151',
+              }}
+            />
           ))}
         </View>
       </View>
-    </SafeAreaView>
+    </Animated.View>
   );
 }
