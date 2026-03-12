@@ -18,12 +18,20 @@
       "infoPlist": {
         "CFBundleURLTypes": [
           {
-            "CFBundleURLSchemes": ["reelroam"]
+            "CFBundleURLSchemes": [
+              "reelroam"
+            ]
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyADEu3-UhuvGiZnmH_6yuwFcmFmmUZsAxM"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -37,13 +45,30 @@
           "action": "android.intent.action.SEND",
           "autoVerify": true,
           "data": [
-            { "scheme": "https", "host": "*.tiktok.com" },
-            { "scheme": "https", "host": "*.instagram.com" },
-            { "scheme": "https", "host": "*.youtube.com" },
-            { "scheme": "https", "host": "youtu.be" },
-            { "scheme": "https", "host": "vm.tiktok.com" }
+            {
+              "scheme": "https",
+              "host": "*.tiktok.com"
+            },
+            {
+              "scheme": "https",
+              "host": "*.instagram.com"
+            },
+            {
+              "scheme": "https",
+              "host": "*.youtube.com"
+            },
+            {
+              "scheme": "https",
+              "host": "youtu.be"
+            },
+            {
+              "scheme": "https",
+              "host": "vm.tiktok.com"
+            }
           ],
-          "category": ["android.intent.category.DEFAULT"]
+          "category": [
+            "android.intent.category.DEFAULT"
+          ]
         }
       ]
     },
@@ -59,7 +84,9 @@
             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
             "NSExtensionActivationSupportsWebPageWithMaxCount": 1
           },
-          "androidIntentFilters": ["text/*"]
+          "androidIntentFilters": [
+            "text/*"
+          ]
         }
       ]
     ],

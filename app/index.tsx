@@ -19,6 +19,7 @@ import { FREE_TRIP_LIMIT, useProStatus } from '../hooks/useProStatus';
 
 const PLATFORM_HOSTS: Record<string, string> = {
   'tiktok.com': 'tiktok',
+  'www.tiktok.com': 'tiktok',
   'vm.tiktok.com': 'tiktok',
   'vt.tiktok.com': 'tiktok',
   'instagram.com': 'instagram',
@@ -181,10 +182,11 @@ export default function HomeScreen() {
   function handleGenerate() {
     const platform = detectPlatform(inputUrl);
     if (!inputUrl.trim() || !platform) return;
-    if (isLoaded && !isPro && tripsRemaining === 0) {
-      router.push({ pathname: '/upgrade', params: { reason: 'rate_limit' } } as any);
-      return;
-    }
+    // TODO: re-enable rate limit gate before launch
+    // if (isLoaded && !isPro && tripsRemaining === 0) {
+    //   router.push({ pathname: '/upgrade', params: { reason: 'rate_limit' } } as any);
+    //   return;
+    // }
     router.push({ pathname: '/processing', params: { url: inputUrl.trim(), platform } });
   }
 
