@@ -83,3 +83,24 @@ export async function hasSavedTrip(tripId: string, deviceId: string): Promise<bo
     .maybeSingle();
   return data !== null;
 }
+
+// ─── Bucket list ──────────────────────────────────────────────────────────────
+
+export async function getSavedTrips(deviceId: string) {
+  const { data: saves } = await supabase
+    .from('trip_saves')
+    .select('trip_id')
+    .eq('device_id', deviceId);
+
+  if (!saves || saves.length === 0) return [];
+
+  const tripIds = saves.map((s: { trip_id: string }) => s.trip_id);
+  const { data: trips, error } = await supabase
+    .from('trips')
+    .select('*')
+    .in('id', tripIds)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return trips ?? [];
+}
