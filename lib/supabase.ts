@@ -84,6 +84,43 @@ export async function hasSavedTrip(tripId: string, deviceId: string): Promise<bo
   return data !== null;
 }
 
+// ─── Feed publishing ─────────────────────────────────────────────────────────
+
+export async function publishTrip(tripId: string, username: string, avatarEmoji: string) {
+  const { error } = await supabase
+    .from('trips')
+    .update({ is_public: true, username, user_avatar_emoji: avatarEmoji })
+    .eq('id', tripId);
+  if (error) throw error;
+}
+
+export async function unpublishTrip(tripId: string) {
+  const { error } = await supabase
+    .from('trips')
+    .update({ is_public: false })
+    .eq('id', tripId);
+  if (error) throw error;
+}
+
+export async function isUsernameAvailable(username: string, deviceId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('device_id')
+    .eq('username', username)
+    .maybeSingle();
+  return data === null || data.device_id === deviceId;
+}
+
+export async function upsertProfile(deviceId: string, username: string, avatarEmoji: string) {
+  const { error } = await supabase
+    .from('profiles')
+    .upsert(
+      { device_id: deviceId, username, avatar_emoji: avatarEmoji },
+      { onConflict: 'device_id' },
+    );
+  if (error) throw error;
+}
+
 // ─── Bucket list ──────────────────────────────────────────────────────────────
 
 export async function getSavedTrips(deviceId: string) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -14,7 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Callout, Marker } from 'react-native-maps';
-import { supabase } from '../../lib/supabase';
+import { supabase, unpublishTrip } from '../../lib/supabase';
+import { getOrCreateDeviceId } from '../../lib/deviceId';
+import ShareToFeedModal from '../../components/ShareToFeedModal';
 
 interface ItineraryActivity {
   id: string;
@@ -49,10 +52,14 @@ interface TripRow {
   title: string;
   platform: string;
   is_pro: boolean;
+  is_public: boolean;
   share_slug: string;
   source_url: string;
   itinerary: ItineraryData;
   created_at: string;
+  username?: string;
+  user_avatar_emoji?: string;
+  device_id?: string;
 }
 
 const TYPE_CONFIG = {
@@ -167,12 +174,17 @@ export default function TripDetailScreen() {
   const [notFound, setNotFound] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [activeDay, setActiveDay] = useState(1);
+  const [isPublic, setIsPublic] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [deviceId, setDeviceId] = useState('');
 
   const mapRef = useRef<MapView>(null);
   const scrollRef = useRef<ScrollView>(null);
   const dayOffsets = useRef<Record<number, number>>({});
 
   useEffect(() => {
+    getOrCreateDeviceId().then(setDeviceId);
+
     async function load() {
       const { data, error } = await supabase
         .from('trips')
@@ -183,6 +195,7 @@ export default function TripDetailScreen() {
         setNotFound(true);
       } else {
         setTrip(data as TripRow);
+        setIsPublic(data.is_public ?? false);
         supabase.from('trip_views').insert({ trip_id: data.id }).then(() => {});
       }
       setLoading(false);
@@ -237,6 +250,31 @@ export default function TripDetailScreen() {
         title: trip.itinerary?.title ?? trip.title,
       });
     } catch { /* dismissed */ }
+  }
+
+  function handlePublicBadgePress() {
+    if (!trip) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      'Remove from Feed?',
+      'Your trip will be removed from the Discovery feed. Likes and saves will be preserved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Make Private',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await unpublishTrip(trip.id);
+              setIsPublic(false);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch {
+              Alert.alert('Error', 'Failed to update trip visibility.');
+            }
+          },
+        },
+      ],
+    );
   }
 
   function onMapReady() {
@@ -323,6 +361,15 @@ export default function TripDetailScreen() {
                 <Text className="text-xs font-semibold text-amber-700">✦ Pro</Text>
               </View>
             )}
+            {isPublic && (
+              <TouchableOpacity
+                onPress={handlePublicBadgePress}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, backgroundColor: '#F0FDF4' }}
+              >
+                <Ionicons name="earth" size={11} color="#16a34a" />
+                <Text style={{ fontSize: 11, fontWeight: '600', color: '#16a34a' }}>Public</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
         {!!itinerary?.totalEstimatedCost && (
@@ -402,8 +449,21 @@ export default function TripDetailScreen() {
           className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl border border-gray-200"
         >
           <Ionicons name="share-outline" size={18} color={TEAL} />
-          <Text className="font-semibold text-gray-800">Share Trip</Text>
+          <Text className="font-semibold text-gray-800">Share</Text>
         </TouchableOpacity>
+
+        {/* Share to Feed */}
+        {!isPublic && (
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowShareModal(true); }}
+            className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl border"
+            style={{ borderColor: TEAL, backgroundColor: 'rgba(13,148,136,0.06)' }}
+          >
+            <Ionicons name="earth-outline" size={18} color={TEAL} />
+            <Text style={{ fontWeight: '600', color: TEAL, fontSize: 14 }}>To Feed</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           onPress={() => router.replace('/')}
           className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl"
@@ -413,6 +473,20 @@ export default function TripDetailScreen() {
           <Text className="text-white font-semibold">New Trip</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Share to Feed modal */}
+      {trip && (
+        <ShareToFeedModal
+          tripId={trip.id}
+          deviceId={deviceId}
+          visible={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          onShared={(uname, emoji) => {
+            setIsPublic(true);
+            setShowShareModal(false);
+          }}
+        />
+      )}
     </View>
   );
 }
