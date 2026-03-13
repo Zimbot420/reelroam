@@ -26,6 +26,31 @@ export interface Day {
   activities: Activity[];
 }
 
+export interface ItineraryData {
+  title: string;
+  destination: string;
+  totalDays: number;
+  coverImageQuery?: string;
+  days: {
+    day: number;
+    label: string;
+    activities: {
+      id: string;
+      name: string;
+      description: string;
+      locationName: string;
+      coordinates: { lat: number; lng: number };
+      duration: string;
+      type: 'food' | 'activity' | 'accommodation' | 'transport';
+      estimatedCost: string;
+      tips: string;
+    }[];
+  }[];
+  totalEstimatedCost: string;
+  bestTimeToVisit: string;
+  tips: string[];
+}
+
 export interface Trip {
   id: string;
   created_at: string;
@@ -33,9 +58,15 @@ export interface Trip {
   platform?: string;
   title?: string;
   locations?: Location[];
-  itinerary?: Day[];
+  itinerary?: ItineraryData;
   share_slug?: string;
   extraction_method?: string;
   is_pro: boolean;
   device_id?: string;
+  // Social / feed fields
+  is_public?: boolean;
+  like_count?: number;
+  save_count?: number;
+  username?: string;
+  user_avatar_emoji?: string;
 }
