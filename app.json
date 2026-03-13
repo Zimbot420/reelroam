@@ -82,6 +82,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withPodsSwiftConcurrencyFix",
       [
         "expo-share-intent",
         {
@@ -89,6 +90,7 @@
             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
             "NSExtensionActivationSupportsWebPageWithMaxCount": 1
           },
+          "iosAppGroupIdentifier": "group.com.simen.scrollaway",
           "androidIntentFilters": [
             "text/*"
           ]
@@ -98,7 +100,10 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.1"
+            "deploymentTarget": "15.1",
+            "xcconfig": {
+              "SWIFT_STRICT_CONCURRENCY": "minimal"
+            }
           }
         }
       ]
