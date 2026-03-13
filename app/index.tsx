@@ -1,19 +1,25 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Dimensions,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image as ExpoImage } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import SpinningGlobe from '../components/SpinningGlobe';
 import { Trip } from '../types';
 import { useRecentTrips } from '../hooks/useRecentTrips';
 import { FREE_TRIP_LIMIT, useProStatus } from '../hooks/useProStatus';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ─── Platform detection ───────────────────────────────────────────────────────
 
@@ -44,157 +50,122 @@ const PLATFORM_META: Record<string, { icon: string; color: string; label: string
   youtube:   { icon: 'logo-youtube',  color: '#FF0000', label: 'YouTube' },
 };
 
-// ─── Step animation ───────────────────────────────────────────────────────────
+// ─── Star field ───────────────────────────────────────────────────────────────
 
-function StepAnimation() {
-  const pulse = useRef(new Animated.Value(0.3)).current;
+function StarField() {
+  const stars = useMemo(() => {
+    return Array.from({ length: 80 }, (_, i) => ({
+      key: i,
+      left: Math.random() * SCREEN_WIDTH,
+      top: Math.random() * 900,
+      opacity: 0.2 + Math.random() * 0.5,
+      size: 1 + Math.random() * 2,
+    }));
+  }, []);
 
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+      {stars.map((s) => (
+        <View
+          key={s.key}
+          style={{
+            position: 'absolute',
+            left: s.left,
+            top: s.top,
+            width: s.size,
+            height: s.size,
+            borderRadius: s.size / 2,
+            backgroundColor: 'white',
+            opacity: s.opacity,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ─── Skeleton shimmer ─────────────────────────────────────────────────────────
+
+function SkeletonShimmer({ width, height, borderRadius = 10 }: { width: number | string; height: number; borderRadius?: number }) {
+  const opacity = useRef(new Animated.Value(0.3)).current;
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1,   duration: 800, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.3, duration: 800, useNativeDriver: true }),
-      ])
-    ).start();
-    return () => pulse.stopAnimation();
-  }, []);
-
-  const PlatformIcon = ({
-    iconName,
-    bg,
-  }: {
-    iconName: string;
-    bg: string;
-  }) => (
-    <View
-      className="w-10 h-10 rounded-xl items-center justify-center mb-1"
-      style={{ backgroundColor: bg }}
-    >
-      <Ionicons name={iconName as any} size={20} color="white" />
-    </View>
-  );
-
-  return (
-    <View className="flex-row items-center justify-center mt-6 mb-2">
-      {/* Platform icons stacked */}
-      <View className="items-center gap-1">
-        <PlatformIcon iconName="musical-notes" bg="#000000" />
-        <PlatformIcon iconName="camera"        bg="#E1306C" />
-        <PlatformIcon iconName="logo-youtube"  bg="#FF0000" />
-      </View>
-
-      <Animated.View className="mx-3" style={{ opacity: pulse }}>
-        <Ionicons name="arrow-forward" size={22} color="#0D9488" />
-      </Animated.View>
-
-      {/* Share icon */}
-      <View className="w-14 h-14 rounded-2xl bg-teal-50 items-center justify-center border border-teal-200">
-        <Ionicons name="share-outline" size={26} color="#0D9488" />
-      </View>
-
-      <Animated.View className="mx-3" style={{ opacity: pulse }}>
-        <Ionicons name="arrow-forward" size={22} color="#0D9488" />
-      </Animated.View>
-
-      {/* ReelRoam icon */}
-      <View
-        className="w-14 h-14 rounded-2xl items-center justify-center"
-        style={{ backgroundColor: '#0D9488' }}
-      >
-        <Ionicons name="map" size={26} color="white" />
-      </View>
-    </View>
-  );
-}
-
-// ─── Skeleton card ────────────────────────────────────────────────────────────
-
-function SkeletonShimmer({ width, height, borderRadius = 10 }: { width: string | number; height: number; borderRadius?: number }) {
-  const opacity = useRef(new Animated.Value(0.4)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 700, useNativeDriver: true }),
       ])
     ).start();
   }, []);
-  return <Animated.View style={{ opacity, width, height, borderRadius, backgroundColor: '#E5E7EB', marginBottom: 6 }} />;
-}
-
-function TripCardSkeleton() {
   return (
-    <View className="bg-white border border-gray-100 rounded-2xl p-4 mb-3">
-      <View className="flex-row items-center justify-between">
-        <View className="flex-1 mr-3">
-          <SkeletonShimmer width="70%" height={16} />
-          <SkeletonShimmer width="45%" height={12} />
-        </View>
-        <SkeletonShimmer width={28} height={28} borderRadius={8} />
-      </View>
-    </View>
+    <Animated.View style={{ opacity, width, height, borderRadius, backgroundColor: '#ffffff15', marginRight: 12 }} />
   );
 }
 
-// ─── Trip card ────────────────────────────────────────────────────────────────
+// ─── Trip image card ──────────────────────────────────────────────────────────
 
-function TripCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
-  const dayCount = trip.itinerary?.length ?? 0;
+async function fetchCardImage(locationName: string): Promise<string | null> {
+  try {
+    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) return null;
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(locationName)}&inputtype=textquery&fields=photos&key=${apiKey}`,
+    );
+    const json = await res.json();
+    const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
+    if (!ref) return null;
+    return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${ref}&key=${apiKey}`;
+  } catch {
+    return null;
+  }
+}
+
+function TripImageCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const destination =
     trip.title ??
     (trip.locations?.[0]?.name ? `Trip to ${trip.locations[0].name}` : 'Untitled Trip');
+  const dayCount = trip.itinerary?.length ?? 0;
 
-  const date = new Date(trip.created_at).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
-
-  const platformMeta = trip.platform ? PLATFORM_META[trip.platform] : null;
+  useEffect(() => {
+    const locationName = trip.locations?.[0]?.name ?? trip.title;
+    if (locationName) {
+      fetchCardImage(locationName).then(setImageUrl);
+    }
+  }, [trip.id]);
 
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.75}
-      className="bg-white border border-gray-100 rounded-2xl p-4 mb-3 shadow-sm"
+      activeOpacity={0.85}
+      style={{ width: 150, height: 180, borderRadius: 16, marginRight: 12, overflow: 'hidden' }}
     >
-      <View className="flex-row items-center justify-between">
-        <View className="flex-1 mr-3">
-          <Text className="text-gray-900 font-semibold text-base" numberOfLines={1}>
-            {destination}
-          </Text>
-          <View className="flex-row items-center mt-1 gap-3">
-            {dayCount > 0 && (
-              <View className="flex-row items-center gap-1">
-                <Ionicons name="calendar-outline" size={13} color="#6B7280" />
-                <Text className="text-gray-500 text-xs">
-                  {dayCount} {dayCount === 1 ? 'day' : 'days'}
-                </Text>
-              </View>
-            )}
-            <View className="flex-row items-center gap-1">
-              <Ionicons name="time-outline" size={13} color="#6B7280" />
-              <Text className="text-gray-500 text-xs">{date}</Text>
-            </View>
-            {trip.is_pro && (
-              <View className="bg-teal-50 rounded-full px-2 py-0.5">
-                <Text className="text-teal-700 text-xs font-medium">Pro</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View className="flex-row items-center gap-2">
-          {platformMeta && (
-            <View
-              className="w-7 h-7 rounded-lg items-center justify-center"
-              style={{ backgroundColor: platformMeta.color }}
-            >
-              <Ionicons name={platformMeta.icon as any} size={14} color="white" />
-            </View>
-          )}
-          <Ionicons name="chevron-forward" size={18} color="#D1D5DB" />
-        </View>
-      </View>
+      {imageUrl ? (
+        <ExpoImage
+          source={{ uri: imageUrl }}
+          contentFit="cover"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        />
+      ) : (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0D9488' }} />
+      )}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.85)']}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 110 }}
+      />
+      <Text
+        numberOfLines={2}
+        style={{
+          position: 'absolute', bottom: 24, left: 10, right: 10,
+          color: 'white', fontSize: 14, fontWeight: '700', lineHeight: 18,
+        }}
+      >
+        {destination}
+      </Text>
+      {dayCount > 0 && (
+        <Text style={{ position: 'absolute', bottom: 8, left: 10, color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
+          {dayCount} {dayCount === 1 ? 'day' : 'days'}
+        </Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -203,6 +174,7 @@ function TripCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { trips, isLoading } = useRecentTrips();
   const { isPro, tripsRemaining, isLoaded } = useProStatus();
   const [inputUrl, setInputUrl] = useState('');
@@ -228,77 +200,111 @@ export default function HomeScreen() {
     router.push({ pathname: '/processing', params: { url: inputUrl.trim(), platform } });
   }
 
+  const bannerHeight = 52 + insets.bottom;
+
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <View style={{ flex: 1, backgroundColor: '#0a0a1a' }}>
       <Stack.Screen options={{ headerShown: false }} />
 
+      {/* Star field */}
+      <StarField />
+
       <ScrollView
-        className="flex-1"
-        contentContainerClassName="pb-8"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: isPro ? insets.bottom + 20 : bannerHeight + 8 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         {/* ── Header ── */}
-        <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
-          <View className="flex-row items-center gap-2">
-            <View
-              className="w-8 h-8 rounded-lg items-center justify-center"
-              style={{ backgroundColor: '#0D9488' }}
-            >
-              <Ionicons name="map" size={16} color="white" />
-            </View>
-            <Text className="text-xl font-bold text-gray-900">ReelRoam</Text>
-          </View>
+        <View style={{ paddingTop: 60, alignItems: 'center', position: 'relative', paddingBottom: 4 }}>
+          <Text style={{ fontSize: 42, fontWeight: '700', color: 'white', letterSpacing: -0.5 }}>
+            ScrollAway
+          </Text>
+          <Text style={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', letterSpacing: 2, marginTop: 6 }}>
+            Share. Explore. Go.
+          </Text>
           <TouchableOpacity
             onPress={() => router.push('/settings' as any)}
-            className="w-9 h-9 items-center justify-center rounded-full bg-gray-100"
+            style={{ position: 'absolute', top: 60, right: 20 }}
           >
-            <Ionicons name="settings-outline" size={20} color="#374151" />
+            <Ionicons name="settings-outline" size={24} color="white" />
           </TouchableOpacity>
         </View>
 
-        {/* ── Hero ── */}
-        <View className="px-5 pt-6">
-          <Text className="text-3xl font-bold text-gray-900 leading-tight">
-            See it.{'\n'}Plan it.{'\n'}Go.
-          </Text>
-          <Text className="text-gray-500 text-base mt-3 leading-relaxed">
-            Share any travel video to get an instant AI itinerary
-          </Text>
-          <StepAnimation />
-          <Text className="text-center text-xs text-gray-400 mt-1 mb-2">
-            Tap Share in TikTok, Instagram, or YouTube — then select ReelRoam
-          </Text>
+        {/* ── Globe ── */}
+        <View style={{ position: 'relative', alignItems: 'center' }}>
+          {/* Teal glow behind globe */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 40,
+              width: 280,
+              height: 280,
+              borderRadius: 140,
+              backgroundColor: '#0D9488',
+              opacity: 0.15,
+              shadowColor: '#0D9488',
+              shadowOpacity: 0.8,
+              shadowRadius: 60,
+              elevation: 40,
+            }}
+          />
+          <SpinningGlobe />
         </View>
 
-        {/* ── Divider ── */}
-        <View className="flex-row items-center px-5 my-5">
-          <View className="flex-1 h-px bg-gray-100" />
-          <Text className="mx-3 text-xs text-gray-400 uppercase tracking-widest">or</Text>
-          <View className="flex-1 h-px bg-gray-100" />
+        {/* ── Platform icons ── */}
+        <View style={{ alignItems: 'center', marginTop: -8 }}>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            {(['tiktok', 'instagram', 'youtube'] as const).map((p) => (
+              <View
+                key={p}
+                style={{
+                  width: 52, height: 52, borderRadius: 14,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Ionicons name={PLATFORM_META[p].icon as any} size={24} color="white" />
+              </View>
+            ))}
+          </View>
+          <Ionicons name="chevron-down" size={20} color="#0D9488" style={{ marginTop: 12 }} />
         </View>
 
-        {/* ── Manual URL input ── */}
-        <View className="px-5">
-          <View className="flex-row items-center bg-gray-50 border border-gray-200 rounded-2xl px-4 h-13 gap-2">
+        {/* ── URL input ── */}
+        <View style={{ marginHorizontal: 20, marginTop: 12 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              height: 56,
+              borderRadius: 50,
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.12)',
+              alignItems: 'center',
+              paddingLeft: 20,
+              paddingRight: 6,
+            }}
+          >
             {detectedPlatform ? (
               <View
-                className="w-7 h-7 rounded-lg items-center justify-center"
-                style={{ backgroundColor: PLATFORM_META[detectedPlatform].color }}
+                style={{
+                  width: 28, height: 28, borderRadius: 8,
+                  backgroundColor: PLATFORM_META[detectedPlatform].color,
+                  alignItems: 'center', justifyContent: 'center', marginRight: 10,
+                }}
               >
-                <Ionicons
-                  name={PLATFORM_META[detectedPlatform].icon as any}
-                  size={14}
-                  color="white"
-                />
+                <Ionicons name={PLATFORM_META[detectedPlatform].icon as any} size={14} color="white" />
               </View>
             ) : (
-              <Ionicons name="link-outline" size={18} color="#9CA3AF" />
+              <Ionicons name="link-outline" size={18} color="rgba(255,255,255,0.25)" style={{ marginRight: 10 }} />
             )}
             <TextInput
-              className="flex-1 text-gray-900 text-sm py-3"
-              placeholder="Paste a URL here"
-              placeholderTextColor="#9CA3AF"
+              style={{ flex: 1, color: 'white', fontSize: 14 }}
+              placeholder="https://www.link.on/URL"
+              placeholderTextColor="rgba(255,255,255,0.25)"
               value={inputUrl}
               onChangeText={setInputUrl}
               autoCapitalize="none"
@@ -307,105 +313,116 @@ export default function HomeScreen() {
               returnKeyType="go"
               onSubmitEditing={handleGenerate}
             />
-            {inputUrl.length > 0 && (
-              <TouchableOpacity onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setInputUrl(''); }}>
-                <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+            {inputUrl.length > 0 && !detectedPlatform && (
+              <TouchableOpacity
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setInputUrl(''); }}
+                style={{ padding: 6 }}
+              >
+                <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
             )}
+            {/* Inline Generate Trip button */}
+            <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+              <TouchableOpacity
+                onPress={handleGenerate}
+                onPressIn={pressIn}
+                onPressOut={pressOut}
+                disabled={!detectedPlatform}
+                activeOpacity={0.85}
+                style={{
+                  height: 44,
+                  borderRadius: 44,
+                  paddingHorizontal: 16,
+                  backgroundColor: detectedPlatform ? '#0D9488' : 'rgba(255,255,255,0.08)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: detectedPlatform ? 'white' : 'rgba(255,255,255,0.3)', fontWeight: '600', fontSize: 14 }}>
+                  Generate Trip
+                </Text>
+              </TouchableOpacity>
+            </Animated.View>
           </View>
 
-          <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-            <TouchableOpacity
-              onPress={handleGenerate}
-              onPressIn={pressIn}
-              onPressOut={pressOut}
-              disabled={!detectedPlatform}
-              activeOpacity={0.9}
-              className="mt-3 h-13 rounded-2xl items-center justify-center"
-              style={{
-                backgroundColor: detectedPlatform ? '#0D9488' : '#E5E7EB',
-              }}
-            >
-              <Text
-                className="font-semibold text-base"
-                style={{ color: detectedPlatform ? 'white' : '#9CA3AF' }}
-              >
-                Generate Trip
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
+          {/* Helper text */}
+          <Text style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)', marginTop: 10 }}>
+            Share any travel video to get your AI itinerary instantly
+          </Text>
         </View>
 
         {/* ── Recent trips ── */}
-        <View className="px-5 mt-8">
-          <Text className="text-lg font-bold text-gray-900 mb-4">Your Recent Trips</Text>
+        <View style={{ marginTop: 24 }}>
+          <Text style={{ fontSize: 20, fontWeight: '600', color: 'white', marginLeft: 20, marginBottom: 12 }}>
+            Recent Trips
+          </Text>
 
           {isLoading ? (
-            <>
-              <TripCardSkeleton />
-              <TripCardSkeleton />
-              <TripCardSkeleton />
-            </>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 20, paddingRight: 8 }}>
+              <SkeletonShimmer width={150} height={180} borderRadius={16} />
+              <SkeletonShimmer width={150} height={180} borderRadius={16} />
+              <SkeletonShimmer width={150} height={180} borderRadius={16} />
+            </ScrollView>
           ) : trips.length === 0 ? (
-            <View className="bg-gray-50 rounded-2xl px-5 py-10 items-center">
-              <View
-                className="w-14 h-14 rounded-full items-center justify-center mb-3"
-                style={{ backgroundColor: '#CCFBF1' }}
-              >
-                <Ionicons name="map-outline" size={28} color="#0D9488" />
-              </View>
-              <Text className="text-gray-700 font-semibold text-center text-base">
-                No trips yet
-              </Text>
-              <Text className="text-gray-400 text-sm text-center mt-1 leading-relaxed">
-                Share a travel video from TikTok, Instagram, or YouTube to generate your first trip
-              </Text>
-            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.25)', textAlign: 'center', fontSize: 14, marginHorizontal: 20 }}>
+              Your generated trips will appear here
+            </Text>
           ) : (
-            trips.map((trip) => (
-              <TripCard
-                key={trip.id}
-                trip={trip}
-                onPress={() =>
-                  router.push({ pathname: '/trip/[id]' as any, params: { id: trip.id } })
-                }
-              />
-            ))
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingLeft: 20, paddingRight: 8 }}
+            >
+              {trips.map((trip) => (
+                <TripImageCard
+                  key={trip.id}
+                  trip={trip}
+                  onPress={() =>
+                    router.push({ pathname: '/trip/[slug]' as any, params: { slug: trip.share_slug } })
+                  }
+                />
+              ))}
+            </ScrollView>
           )}
         </View>
       </ScrollView>
 
-      {/* ── Upgrade banner (hidden for Pro users) ── */}
+      {/* ── Pro banner (fixed bottom) ── */}
       {!isPro && (
         <TouchableOpacity
           onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/upgrade' as any); }}
           activeOpacity={0.85}
-          className="mx-5 mb-4 rounded-2xl overflow-hidden"
-          style={{ backgroundColor: tripsRemaining === 0 ? '#DC2626' : '#0D9488' }}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}
         >
-          <View className="flex-row items-center justify-between px-5 py-3">
-            <View className="flex-row items-center gap-2">
+          <LinearGradient
+            colors={['#0D9488', '#0a7a70']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 20,
+              paddingTop: 14,
+              paddingBottom: 14 + insets.bottom,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Ionicons name="sparkles" size={16} color="white" />
-              {isLoaded ? (
-                <Text className="text-white text-sm">
-                  <Text className="font-semibold">
-                    {tripsRemaining === 0
-                      ? 'No free trips remaining'
-                      : `${tripsRemaining} free ${tripsRemaining === 1 ? 'trip' : 'trips'} remaining this month`}
-                  </Text>
-                  {'  ·  '}Upgrade to Pro
-                </Text>
-              ) : (
-                <Text className="text-white text-sm">
-                  <Text className="font-semibold">{FREE_TRIP_LIMIT} free trips/month</Text>
-                  {'  ·  '}Upgrade to Pro
-                </Text>
-              )}
+              <Text style={{ color: 'white', fontSize: 14 }}>
+                {isLoaded ? (
+                  tripsRemaining === 0
+                    ? <Text style={{ fontWeight: '600' }}>No free trips remaining</Text>
+                    : <Text><Text style={{ fontWeight: '600' }}>{tripsRemaining} free {tripsRemaining === 1 ? 'trip' : 'trips'} remaining</Text> · Upgrade to Pro</Text>
+                ) : (
+                  <Text><Text style={{ fontWeight: '600' }}>{FREE_TRIP_LIMIT} free trips/month</Text> · Upgrade to Pro</Text>
+                )}
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
-          </View>
+          </LinearGradient>
         </TouchableOpacity>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
