@@ -10,6 +10,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Trip } from '../types';
 import {
   likeTrip, unlikeTrip, hasLikedTrip,
@@ -19,26 +20,24 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const TEAL = '#0D9488';
-const CARD_HEIGHT = 480;
 
 // Region-based gradient fallbacks
-const REGION_GRADIENTS: Record<string, [string, string]> = {
-  europe:  ['#1a237e', '#6a1b9a'],
-  asia:    ['#004d40', '#00695c'],
-  americas:['#bf360c', '#e65100'],
-  africa:  ['#f57f17', '#e65100'],
-  oceania: ['#006064', '#0277bd'],
-  default: ['#0a0a1a', '#0D9488'],
+const REGION_GRADIENTS: Record<string, [string, string, string]> = {
+  europe:   ['#1a237e', '#4a148c', '#880e4f'],
+  asia:     ['#004d40', '#006064', '#01579b'],
+  americas: ['#bf360c', '#4e342e', '#3e2723'],
+  africa:   ['#f57f17', '#bf360c', '#4e342e'],
+  oceania:  ['#006064', '#01579b', '#0d47a1'],
+  default:  ['#0a0a1a', '#0d2137', '#0D9488'],
 };
 
-function getRegionGradient(destination: string): [string, string] {
+function getRegionGradient(destination: string): [string, string, string] {
   const d = destination.toLowerCase();
   if (/japan|china|thailand|bali|indonesia|vietnam|india|korea|kyoto|bangkok|tokyo/.test(d)) return REGION_GRADIENTS.asia;
   if (/france|italy|spain|greece|portugal|netherlands|amsterdam|paris|barcelona|santorini|amalfi|lisbon/.test(d)) return REGION_GRADIENTS.europe;
   if (/usa|new york|brazil|mexico|rio|canada|peru|colombia/.test(d)) return REGION_GRADIENTS.americas;
   if (/africa|kenya|safari|cape town|morocco|marrakech|egypt/.test(d)) return REGION_GRADIENTS.africa;
   if (/australia|sydney|new zealand|oceania/.test(d)) return REGION_GRADIENTS.oceania;
-  if (/maldives|iceland|dubai|uae/.test(d)) return REGION_GRADIENTS.default;
   return REGION_GRADIENTS.default;
 }
 
@@ -52,7 +51,7 @@ const TYPE_PILLS: { type: string; emoji: string; label: string }[] = [
 
 // ─── Shimmer skeleton ─────────────────────────────────────────────────────────
 
-export function FeedTripCardSkeleton() {
+export function FeedTripCardSkeleton({ height }: { height: number }) {
   const shimmer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -64,17 +63,15 @@ export function FeedTripCardSkeleton() {
     ).start();
   }, []);
 
-  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
+  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.8] });
 
   return (
     <Animated.View
       style={{
         width: '100%',
-        height: CARD_HEIGHT,
-        borderRadius: 20,
+        height,
         backgroundColor: '#1a1a2e',
         opacity,
-        marginBottom: 16,
       }}
     />
   );
@@ -103,10 +100,12 @@ async function fetchCoverImage(query: string): Promise<string | null> {
 interface FeedTripCardProps {
   trip: Trip;
   deviceId: string;
+  cardHeight: number;
   onPress: () => void;
 }
 
-export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardProps) {
+export default function FeedTripCard({ trip, deviceId, cardHeight, onPress }: FeedTripCardProps) {
+  const insets = useSafeAreaInsets();
   const itinerary = trip.itinerary;
   const destination = itinerary?.destination ?? trip.title ?? 'Unknown destination';
   const totalDays = itinerary?.totalDays ?? 0;
@@ -118,8 +117,8 @@ export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardPr
   const [likeCount, setLikeCount] = useState(trip.like_count ?? 0);
   const [saveCount, setSaveCount] = useState(trip.save_count ?? 0);
 
-  // Animate like button
   const heartScale = useRef(new Animated.Value(1)).current;
+  const bookmarkScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     fetchCoverImage(coverQuery).then(setCoverUrl);
@@ -129,12 +128,10 @@ export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardPr
 
   async function handleLike() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Animate heart
     Animated.sequence([
       Animated.spring(heartScale, { toValue: 1.4, useNativeDriver: true, speed: 40 }),
       Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, speed: 40 }),
     ]).start();
-    // Optimistic update
     if (liked) {
       setLiked(false);
       setLikeCount((n) => Math.max(0, n - 1));
@@ -148,6 +145,10 @@ export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardPr
 
   async function handleSave() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.sequence([
+      Animated.spring(bookmarkScale, { toValue: 1.3, useNativeDriver: true, speed: 40 }),
+      Animated.spring(bookmarkScale, { toValue: 1, useNativeDriver: true, speed: 40 }),
+    ]).start();
     if (saved) {
       setSaved(false);
       setSaveCount((n) => Math.max(0, n - 1));
@@ -169,21 +170,18 @@ export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardPr
     } catch { /* dismissed */ }
   }
 
-  // Determine which activity types are present
   const activityTypes = new Set(
     itinerary?.days?.flatMap((d) => d.activities.map((a) => a.type)) ?? [],
   );
   const presentPills = TYPE_PILLS.filter((p) => activityTypes.has(p.type as any));
-
   const gradientColors = getRegionGradient(destination);
 
+  // Right-side action buttons sit 100px from the bottom of the card
+  const actionsBottom = 100;
+
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.97}
-      style={{ width: '100%', height: CARD_HEIGHT, borderRadius: 20, overflow: 'hidden', marginBottom: 16 }}
-    >
-      {/* Background image or gradient */}
+    <View style={{ width: '100%', height: cardHeight, overflow: 'hidden' }}>
+      {/* ── Background image or gradient ── */}
       {coverUrl ? (
         <ExpoImage
           source={{ uri: coverUrl }}
@@ -197,102 +195,165 @@ export default function FeedTripCard({ trip, deviceId, onPress }: FeedTripCardPr
         />
       )}
 
-      {/* Dark gradient overlay — bottom 65% */}
+      {/* ── Dark vignette overlay — stronger at bottom ── */}
       <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.93)']}
-        locations={[0, 0.35, 1]}
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: CARD_HEIGHT * 0.65 }}
+        colors={['rgba(0,0,0,0.15)', 'transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.95)']}
+        locations={[0, 0.25, 0.6, 1]}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       />
 
-      {/* ── Top row ── */}
-      <View style={{ position: 'absolute', top: 16, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        {/* Username pill */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
+      {/* ── Top row: username + day count ── */}
+      <View
+        style={{
+          position: 'absolute',
+          top: insets.top + 12,
+          left: 16,
+          right: 16,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <View
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
+          }}
+        >
           <Text style={{ fontSize: 13, color: 'white' }}>
-            {trip.user_avatar_emoji ?? '🌍'} {trip.username ?? 'traveler'}
+            {trip.user_avatar_emoji ?? '🌍'}  {trip.username ?? 'traveler'}
           </Text>
         </View>
-
-        {/* Day count pill */}
-        <View style={{ backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
+        <View
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
+          }}
+        >
           <Text style={{ fontSize: 13, color: 'white', fontWeight: '600' }}>
-            {totalDays} days
+            {totalDays > 0 ? `${totalDays} days` : ''}
           </Text>
         </View>
       </View>
 
-      {/* ── Bottom section ── */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16 }}>
-        {/* Title */}
+      {/* ── Right-side action column (TikTok style) ── */}
+      <View
+        style={{
+          position: 'absolute',
+          right: 14,
+          bottom: actionsBottom,
+          alignItems: 'center',
+          gap: 22,
+        }}
+      >
+        {/* Like */}
+        <TouchableOpacity onPress={handleLike} style={{ alignItems: 'center', gap: 5 }}>
+          <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+            <Ionicons
+              name={liked ? 'heart' : 'heart-outline'}
+              size={34}
+              color={liked ? '#ef4444' : 'white'}
+            />
+          </Animated.View>
+          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
+            {likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}k` : likeCount}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Save */}
+        <TouchableOpacity onPress={handleSave} style={{ alignItems: 'center', gap: 5 }}>
+          <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
+            <Ionicons
+              name={saved ? 'bookmark' : 'bookmark-outline'}
+              size={32}
+              color={saved ? TEAL : 'white'}
+            />
+          </Animated.View>
+          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
+            {saveCount >= 1000 ? `${(saveCount / 1000).toFixed(1)}k` : saveCount}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Share */}
+        <TouchableOpacity onPress={handleShare} style={{ alignItems: 'center', gap: 5 }}>
+          <Ionicons name="paper-plane-outline" size={30} color="white" />
+          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
+            Share
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Bottom-left content (leaves room for right column) ── */}
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.95}
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 76,
+          paddingHorizontal: 16,
+          paddingBottom: 28,
+        }}
+      >
+        {/* Trip title */}
         <Text
           numberOfLines={2}
-          style={{ color: 'white', fontSize: 24, fontWeight: '700', lineHeight: 30, marginBottom: 4 }}
+          style={{
+            color: 'white',
+            fontSize: 26,
+            fontWeight: '800',
+            lineHeight: 32,
+            marginBottom: 6,
+            textShadowColor: 'rgba(0,0,0,0.5)',
+            textShadowRadius: 8,
+          }}
         >
           {itinerary?.title ?? trip.title}
         </Text>
 
         {/* Destination */}
-        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, marginBottom: 12 }}>
-          {destination}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+          <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.8)" />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>
+            {destination}
+          </Text>
+        </View>
 
         {/* Activity type pills */}
         {presentPills.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
             {presentPills.map((pill) => (
               <View
                 key={pill.type}
                 style={{
                   flexDirection: 'row', alignItems: 'center', gap: 4,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  backgroundColor: 'rgba(255,255,255,0.15)',
                   borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
                 }}
               >
-                <Text style={{ fontSize: 12 }}>{pill.emoji}</Text>
-                <Text style={{ color: 'white', fontSize: 12 }}>{pill.label}</Text>
+                <Text style={{ fontSize: 11 }}>{pill.emoji}</Text>
+                <Text style={{ color: 'white', fontSize: 11 }}>{pill.label}</Text>
               </View>
             ))}
           </View>
         )}
 
-        {/* Action row */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Left: like, save, share */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-            {/* Like */}
-            <TouchableOpacity onPress={handleLike} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-                <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? '#ef4444' : 'white'} />
-              </Animated.View>
-              <Text style={{ color: 'white', fontSize: 13 }}>{likeCount}</Text>
-            </TouchableOpacity>
-
-            {/* Save */}
-            <TouchableOpacity onPress={handleSave} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={22} color={saved ? TEAL : 'white'} />
-              <Text style={{ color: 'white', fontSize: 13 }}>{saveCount}</Text>
-            </TouchableOpacity>
-
-            {/* Share */}
-            <TouchableOpacity onPress={handleShare}>
-              <Ionicons name="share-outline" size={22} color="white" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Right: View Trip button */}
-          <TouchableOpacity
-            onPress={onPress}
-            style={{
-              flexDirection: 'row', alignItems: 'center', gap: 4,
-              backgroundColor: TEAL, borderRadius: 20,
-              paddingHorizontal: 14, paddingVertical: 8,
-            }}
-          >
-            <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>View Trip</Text>
-            <Ionicons name="arrow-forward" size={14} color="white" />
-          </TouchableOpacity>
+        {/* View Trip button */}
+        <View
+          style={{
+            alignSelf: 'flex-start',
+            flexDirection: 'row', alignItems: 'center', gap: 5,
+            backgroundColor: TEAL,
+            borderRadius: 22,
+            paddingHorizontal: 16, paddingVertical: 9,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>View Trip</Text>
+          <Ionicons name="arrow-forward" size={14} color="white" />
         </View>
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </View>
   );
 }
