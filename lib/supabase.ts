@@ -15,7 +15,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 // ─── Discovery feed ───────────────────────────────────────────────────────────
 
-export async function getPublicFeedTrips(page = 0, limit = 10) {
+export async function getPublicFeedTrips(page = 0, limit = 20) {
   const { data, error } = await supabase.rpc('get_feed_trips', {
     page_offset: page * limit,
     page_limit: limit,

@@ -351,6 +351,28 @@ export default function HomeScreen() {
           </Text>
         </View>
 
+        {/* ── Discover button ── */}
+        <TouchableOpacity
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/discover' as any); }}
+          activeOpacity={0.85}
+          style={{
+            marginHorizontal: 20, marginTop: 20,
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            backgroundColor: 'rgba(13,148,136,0.15)',
+            borderWidth: 1, borderColor: 'rgba(13,148,136,0.3)',
+            borderRadius: 16, paddingHorizontal: 16, paddingVertical: 14,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Ionicons name="compass-outline" size={22} color="#0D9488" />
+            <View>
+              <Text style={{ color: 'white', fontWeight: '600', fontSize: 15 }}>Discover Trips</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 1 }}>Browse trips from around the world</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.4)" />
+        </TouchableOpacity>
+
         {/* ── Recent trips ── */}
         <View style={{ marginTop: 24 }}>
           <Text style={{ fontSize: 20, fontWeight: '600', color: 'white', marginLeft: 20, marginBottom: 12 }}>
