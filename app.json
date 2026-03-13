@@ -15,7 +15,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.simen.scrollaway",
-      "buildNumber": "3",
       "teamId": "T3FHS868J8",
       "infoPlist": {
         "CFBundleURLTypes": [
