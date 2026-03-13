@@ -46,7 +46,7 @@ RETURNS SETOF trips AS $$
   WHERE is_public = true
     AND itinerary IS NOT NULL
   ORDER BY
-    (like_count * 2 + save_count + view_count) DESC,
+    (like_count * 2 + save_count) DESC,
     created_at DESC
   LIMIT page_limit
   OFFSET page_offset;

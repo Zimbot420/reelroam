@@ -31,7 +31,7 @@ export async function likeTrip(tripId: string, deviceId: string) {
     .from('trip_likes')
     .insert({ trip_id: tripId, device_id: deviceId });
   if (error) throw error;
-  await supabase.rpc('increment_like_count', { trip_id_arg: tripId });
+  await supabase.rpc('increment_like_count', { trip_id_arg: tripId }).throwOnError();
 }
 
 export async function unlikeTrip(tripId: string, deviceId: string) {
