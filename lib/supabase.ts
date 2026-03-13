@@ -126,18 +126,23 @@ export async function upsertProfile(deviceId: string, username: string, avatarEm
 export async function getSavedTrips(deviceId: string) {
   const { data: saves } = await supabase
     .from('trip_saves')
-    .select('trip_id')
-    .eq('device_id', deviceId);
+    .select('trip_id, created_at')
+    .eq('device_id', deviceId)
+    .order('created_at', { ascending: false });
 
   if (!saves || saves.length === 0) return [];
 
-  const tripIds = saves.map((s: { trip_id: string }) => s.trip_id);
+  type SaveRow = { trip_id: string; created_at: string };
+  const tripIds = saves.map((s: SaveRow) => s.trip_id);
+  const saveMap: Record<string, string> = Object.fromEntries(
+    saves.map((s: SaveRow) => [s.trip_id, s.created_at]),
+  );
+
   const { data: trips, error } = await supabase
     .from('trips')
     .select('*')
-    .in('id', tripIds)
-    .order('created_at', { ascending: false });
+    .in('id', tripIds);
 
   if (error) throw error;
-  return trips ?? [];
+  return (trips ?? []).map((t: any) => ({ ...t, saved_at: saveMap[t.id] ?? t.created_at }));
 }
