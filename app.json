@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "reelroam",
+    "name": "ScrollAway",
     "slug": "reelroam",
-    "scheme": "reelroam",
+    "scheme": "scrollaway",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,16 +14,21 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.zimbot420.reelroam",
+      "bundleIdentifier": "com.simen.scrollaway",
+      "buildNumber": "1",
+      "teamId": "T3FHS868J8",
       "infoPlist": {
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
-              "reelroam"
+              "scrollaway"
             ]
           }
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "ScrollAway uses your location to show nearby places on your trip map.",
+        "NSCameraUsageDescription": "ScrollAway uses your camera to let you add photos to your trips.",
+        "NSPhotoLibraryUsageDescription": "ScrollAway accesses your photos to let you add images to your trips."
       }
     },
     "android": {
@@ -87,6 +92,14 @@
           "androidIntentFilters": [
             "text/*"
           ]
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
         }
       ]
     ],

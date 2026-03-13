@@ -83,7 +83,7 @@ function SkeletonBlock({ w, h }: { w: string; h: number }) {
   }, []);
   return (
     <Animated.View
-      style={{ opacity, height: h, borderRadius: 12, backgroundColor: '#E5E7EB', width: w, marginBottom: 10 }}
+      style={{ opacity, height: h, borderRadius: 12, backgroundColor: '#E5E7EB', width: w as any, marginBottom: 10 }}
     />
   );
 }

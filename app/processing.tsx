@@ -339,7 +339,7 @@ export default function ProcessingScreen() {
   const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const platformStr   = platform ? (Array.isArray(platform) ? platform[0] : platform) : null;
   const urlStr        = url ? (Array.isArray(url) ? url[0] : url) : '';
-  const platformMeta  = platformStr ? PLATFORM_META[platformStr] : null;
+  const platformMeta  = platformStr ? PLATFORM_META[platformStr as keyof typeof PLATFORM_META] : null;
   const shortUrl      = urlStr ? urlStr.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45) : '';
 
   // ── Error screen ─────────────────────────────────────────────────────

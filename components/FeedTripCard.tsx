@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Image,
   Share,
   Text,
   TouchableOpacity,
@@ -77,22 +78,44 @@ export function FeedTripCardSkeleton({ height }: { height: number }) {
   );
 }
 
-// ─── Google Places image fetch ────────────────────────────────────────────────
+// ─── Photo fetching ───────────────────────────────────────────────────────────
 
-async function fetchCoverImage(query: string): Promise<string | null> {
+async function fetchLocationPhotos(locationName: string, apiKey: string): Promise<string[]> {
   try {
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) return null;
     const res = await fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=photos&key=${apiKey}`,
+      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(locationName)}&inputtype=textquery&fields=photos&key=${apiKey}`,
     );
     const json = await res.json();
-    const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-    if (!ref) return null;
-    return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${ref}&key=${apiKey}`;
+    const photos: any[] = json.candidates?.[0]?.photos ?? [];
+    // Sort by width descending — highest resolution first
+    const sorted = [...photos].sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
+    return sorted.slice(0, 3).map((p: any) =>
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1600&maxheight=1600&photo_reference=${p.photo_reference}&key=${apiKey}`,
+    );
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function fetchTripPhotos(trip: Trip): Promise<string[]> {
+  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return [];
+
+  // Destination first for the hero shot, then individual locations for variety
+  const names: string[] = [];
+  const destination = trip.itinerary?.destination ?? trip.title ?? '';
+  if (destination) names.push(destination);
+  (trip.locations ?? []).slice(0, 4).forEach((loc) => {
+    if (loc.name && !names.includes(loc.name)) names.push(loc.name);
+  });
+
+  const all: string[] = [];
+  for (const name of names) {
+    if (all.length >= 12) break;
+    const photos = await fetchLocationPhotos(name, apiKey);
+    all.push(...photos);
+  }
+  return all.slice(0, 12);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -101,30 +124,68 @@ interface FeedTripCardProps {
   trip: Trip;
   deviceId: string;
   cardHeight: number;
+  isActive: boolean;
   onPress: () => void;
 }
 
-export default function FeedTripCard({ trip, deviceId, cardHeight, onPress }: FeedTripCardProps) {
+export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onPress }: FeedTripCardProps) {
   const insets = useSafeAreaInsets();
   const itinerary = trip.itinerary;
   const destination = itinerary?.destination ?? trip.title ?? 'Unknown destination';
   const totalDays = itinerary?.totalDays ?? 0;
-  const coverQuery = itinerary?.coverImageQuery ?? destination;
 
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [slideshowIcon, setSlideshowIcon] = useState<'pause' | 'play' | null>(null);
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
   const [likeCount, setLikeCount] = useState(trip.like_count ?? 0);
   const [saveCount, setSaveCount] = useState(trip.save_count ?? 0);
 
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
+  const iconAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    fetchCoverImage(coverQuery).then(setCoverUrl);
+    fetchTripPhotos(trip).then(setPhotos);
     hasLikedTrip(trip.id, deviceId).then(setLiked);
     hasSavedTrip(trip.id, deviceId).then(setSaved);
   }, [trip.id]);
+
+  // Auto-playing slideshow — only runs when this card is visible on screen
+  useEffect(() => {
+    if (!isActive || paused || photos.length <= 1) return;
+    const interval = setInterval(() => {
+      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setCurrentIndex((prev) => (prev + 1) % photos.length);
+        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      });
+    }, 1800);
+    return () => clearInterval(interval);
+  }, [isActive, paused, photos.length]);
+
+  // Prefetch the next image while the current one is showing
+  useEffect(() => {
+    if (photos.length <= 1) return;
+    const next = (currentIndex + 1) % photos.length;
+    Image.prefetch(photos[next]).catch(() => {});
+  }, [currentIndex, photos]);
+
+  function flashIcon(type: 'pause' | 'play') {
+    setSlideshowIcon(type);
+    iconAnim.stopAnimation();
+    iconAnim.setValue(1);
+    Animated.timing(iconAnim, { toValue: 0, duration: 700, delay: 500, useNativeDriver: true })
+      .start(() => setSlideshowIcon(null));
+  }
+
+  function handlePhotoTap() {
+    if (photos.length <= 1) return;
+    if (paused) { setPaused(false); flashIcon('play'); }
+    else { setPaused(true); flashIcon('pause'); }
+  }
 
   async function handleLike() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -175,24 +236,46 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, onPress }: Fe
   );
   const presentPills = TYPE_PILLS.filter((p) => activityTypes.has(p.type as any));
   const gradientColors = getRegionGradient(destination);
+  const currentPhoto = photos[currentIndex] ?? null;
 
   // Right-side action buttons sit 100px from the bottom of the card
   const actionsBottom = 100;
 
   return (
     <View style={{ width: '100%', height: cardHeight, overflow: 'hidden' }}>
-      {/* ── Background image or gradient ── */}
-      {coverUrl ? (
-        <ExpoImage
-          source={{ uri: coverUrl }}
-          contentFit="cover"
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
-      ) : (
-        <LinearGradient
-          colors={gradientColors}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
+      {/* ── Gradient base — visible during load and crossfade transitions ── */}
+      <LinearGradient
+        colors={gradientColors}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+      />
+
+      {/* ── Animated photo layer — tappable to pause/resume ── */}
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={handlePhotoTap}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+      >
+        {currentPhoto && (
+          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+            <ExpoImage
+              source={{ uri: currentPhoto }}
+              contentFit="cover"
+              style={{ width: '100%', height: '100%' }}
+            />
+          </Animated.View>
+        )}
+      </TouchableOpacity>
+
+      {/* ── Pause / play icon flash ── */}
+      {slideshowIcon && (
+        <Animated.View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', opacity: iconAnim }}
+        >
+          <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name={slideshowIcon === 'pause' ? 'pause' : 'play'} size={36} color="white" />
+          </View>
+        </Animated.View>
       )}
 
       {/* ── Dark vignette overlay — stronger at bottom ── */}
@@ -206,7 +289,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, onPress }: Fe
       <View
         style={{
           position: 'absolute',
-          top: insets.top + 12,
+          top: insets.top + 56,
           left: 16,
           right: 16,
           flexDirection: 'row',

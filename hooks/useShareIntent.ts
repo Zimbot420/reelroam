@@ -85,7 +85,7 @@ export function useShareIntent(): ShareIntentResult {
   // Surface library-level errors
   useEffect(() => {
     if (error) {
-      setResult((prev) => ({ ...prev, error: error.message ?? 'Unknown share error' }));
+      setResult((prev) => ({ ...prev, error: (error as any).message ?? String(error) ?? 'Unknown share error' }));
     }
   }, [error]);
 

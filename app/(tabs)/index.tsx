@@ -97,7 +97,7 @@ function SkeletonShimmer({ width, height, borderRadius = 10 }: { width: number |
     ).start();
   }, []);
   return (
-    <Animated.View style={{ opacity, width, height, borderRadius, backgroundColor: '#ffffff15', marginRight: 12 }} />
+    <Animated.View style={{ opacity, width: width as any, height, borderRadius, backgroundColor: '#ffffff15', marginRight: 12 }} />
   );
 }
 
