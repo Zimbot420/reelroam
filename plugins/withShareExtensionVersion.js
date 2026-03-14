@@ -7,9 +7,9 @@
  * level, but the target override takes precedence — so the extension always
  * reports version "1" regardless of the actual build number.
  *
- * Fix: use withXcodeProject to delete the CURRENT_PROJECT_VERSION and
- * MARKETING_VERSION overrides from the extension target's build configurations,
- * so the target inherits the values EAS sets at the project level.
+ * Fix: delete the CURRENT_PROJECT_VERSION and MARKETING_VERSION overrides from
+ * the extension target's build configurations so the target inherits the values
+ * EAS sets at the project level.
  */
 const { withXcodeProject } = require('@expo/config-plugins');
 
@@ -19,7 +19,8 @@ module.exports = function withShareExtensionVersion(config) {
 
     const nativeTargets = xcodeProject.pbxNativeTargetSection();
     const buildConfigs = xcodeProject.pbxXCBuildConfigurationSection();
-    const configLists = xcodeProject.pbxXCConfigurationListSection();
+    // Access config lists directly from the raw project objects
+    const configLists = xcodeProject.hash.project.objects['XCConfigurationList'] || {};
 
     for (const [, target] of Object.entries(nativeTargets)) {
       if (typeof target !== 'object' || !target.name) continue;
@@ -28,20 +29,20 @@ module.exports = function withShareExtensionVersion(config) {
 
       console.log(`[withShareExtensionVersion] Found extension target: ${targetName}`);
 
-      const configList = configLists[target.buildConfigurationList];
+      const configListKey = target.buildConfigurationList;
+      const configList = configLists[configListKey] || configLists[configListKey?.replace(/"/g, '')];
       if (!configList?.buildConfigurations) continue;
 
       for (const configRef of configList.buildConfigurations) {
-        const buildConfig = buildConfigs[configRef.value];
+        const key = typeof configRef === 'object' ? configRef.value : configRef;
+        const buildConfig = buildConfigs[key];
         if (!buildConfig?.buildSettings) continue;
 
-        // Remove hardcoded overrides so the target inherits project-level values
-        // that EAS sets correctly at build time
         delete buildConfig.buildSettings.CURRENT_PROJECT_VERSION;
         delete buildConfig.buildSettings.MARKETING_VERSION;
 
         console.log(
-          `[withShareExtensionVersion] Cleared version overrides in ${buildConfig.name ?? configRef.value}`
+          `[withShareExtensionVersion] Cleared version overrides in ${buildConfig.name ?? key}`
         );
       }
     }
