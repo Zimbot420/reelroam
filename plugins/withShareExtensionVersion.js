@@ -1,89 +1,67 @@
 /**
  * Config plugin that syncs the Share Extension's build version with the main app.
  *
- * expo-share-intent adds the extension target via withDangerousMod, which runs
- * after all withXcodeProject mods. So we also use withDangerousMod (registered
- * after expo-share-intent) and directly read/modify the .pbxproj file on disk
- * to remove the hardcoded CURRENT_PROJECT_VERSION = "1" override from the
- * extension target, letting it inherit the project-level value EAS injects.
+ * expo-share-intent adds the extension target via a finalization step that runs
+ * after ALL config plugin mods (including withDangerousMod), so there is no
+ * way to patch it during prebuild. The only reliable hook that runs after the
+ * extension target exists is the Podfile post_install step.
+ *
+ * This plugin injects a Ruby snippet into the Podfile post_install that uses
+ * the xcodeproj gem (bundled with CocoaPods) to open the .xcodeproj, find the
+ * ShareExtension target, and delete the hardcoded CURRENT_PROJECT_VERSION and
+ * MARKETING_VERSION build setting overrides. Removing the overrides lets the
+ * target inherit the project-level values that EAS injects at build time.
  */
 const { withDangerousMod } = require('@expo/config-plugins');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+
+const MARKER = '[withShareExtensionVersion]';
+
+const HOOK = `
+  # Sync ShareExtension version with parent app ${MARKER}
+  require 'xcodeproj'
+  project_path = Dir.glob(File.join(installer.sandbox.root.to_s, '..', '*.xcodeproj')).first
+  if project_path
+    project = Xcodeproj::Project.open(project_path)
+    project.targets.each do |target|
+      next unless target.name.downcase.include?('shareextension')
+      puts "[withShareExtensionVersion] Found target: #{target.name}"
+      target.build_configurations.each do |config|
+        config.build_settings.delete('CURRENT_PROJECT_VERSION')
+        config.build_settings.delete('MARKETING_VERSION')
+        puts "[withShareExtensionVersion] Cleared version overrides in #{config.name}"
+      end
+    end
+    project.save
+    puts "[withShareExtensionVersion] Saved project"
+  else
+    puts "[withShareExtensionVersion] WARNING: No .xcodeproj found"
+  end
+`;
 
 module.exports = function withShareExtensionVersion(config) {
   return withDangerousMod(config, [
     'ios',
     (modConfig) => {
-      const projectRoot = modConfig.modRequest.platformProjectRoot;
-      const projectName = modConfig.modRequest.projectName;
-      const pbxprojPath = path.join(
-        projectRoot,
-        `${projectName}.xcodeproj`,
-        'project.pbxproj'
-      );
+      const podfilePath = path.join(modConfig.modRequest.platformProjectRoot, 'Podfile');
+      let podfile = fs.readFileSync(podfilePath, 'utf8');
 
-      if (!fs.existsSync(pbxprojPath)) {
-        console.warn('[withShareExtensionVersion] project.pbxproj not found — skipping');
+      if (podfile.includes(MARKER)) {
         return modConfig;
       }
 
-      // Use the xcode package (bundled with Expo) to parse and modify the project
-      const xcode = require('xcode');
-      const xcodeProject = xcode.project(pbxprojPath);
-      xcodeProject.parseSync();
-
-      console.log('[withShareExtensionVersion] Scanning Xcode targets...');
-
-      const nativeTargets = xcodeProject.pbxNativeTargetSection();
-      const buildConfigs = xcodeProject.pbxXCBuildConfigurationSection();
-      const configLists =
-        xcodeProject.hash.project.objects['XCConfigurationList'] || {};
-
-      let patched = false;
-
-      for (const [, target] of Object.entries(nativeTargets)) {
-        if (typeof target !== 'object' || !target.name) continue;
-        const targetName = target.name.replace(/"/g, '');
-
-        // Log every target so we can see what names exist
-        console.log(`[withShareExtensionVersion] Target: ${targetName}`);
-
-        if (!targetName.toLowerCase().includes('shareextension')) continue;
-
-        console.log(`[withShareExtensionVersion] Found extension target: ${targetName}`);
-
-        const configListKey = target.buildConfigurationList;
-        const configList =
-          configLists[configListKey] ||
-          configLists[configListKey?.replace(/"/g, '')];
-
-        if (!configList?.buildConfigurations) continue;
-
-        for (const configRef of configList.buildConfigurations) {
-          const key = typeof configRef === 'object' ? configRef.value : configRef;
-          const buildConfig = buildConfigs[key];
-          if (!buildConfig?.buildSettings) continue;
-
-          delete buildConfig.buildSettings.CURRENT_PROJECT_VERSION;
-          delete buildConfig.buildSettings.MARKETING_VERSION;
-          patched = true;
-
-          console.log(
-            `[withShareExtensionVersion] Cleared version overrides in ${buildConfig.name ?? key}`
-          );
-        }
-      }
-
-      if (patched) {
-        fs.writeFileSync(pbxprojPath, xcodeProject.writeSync());
-        console.log('[withShareExtensionVersion] Saved project.pbxproj');
-      } else {
-        console.warn(
-          '[withShareExtensionVersion] No ShareExtension target found — nothing patched'
+      if (podfile.includes('post_install do |installer|')) {
+        podfile = podfile.replace(
+          /post_install do \|installer\|/,
+          `post_install do |installer|\n${HOOK}`
         );
+      } else {
+        podfile += `\npost_install do |installer|\n${HOOK}\nend\n`;
       }
 
+      fs.writeFileSync(podfilePath, podfile);
+      console.log('[withShareExtensionVersion] Injected post_install hook into Podfile');
       return modConfig;
     },
   ]);
