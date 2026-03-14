@@ -1,63 +1,51 @@
 /**
- * Config plugin that syncs the Share Extension's CFBundleVersion and
- * CFBundleShortVersionString with the main app by injecting a Ruby snippet
- * into the Podfile's post_install hook.
+ * Config plugin that syncs the Share Extension's build version with the main app.
  *
- * Why Podfile instead of withDangerousMod:
- *   expo-share-intent creates the extension files *after* all withDangerousMod
- *   hooks have run, so a direct file patch always fires too early and finds
- *   nothing. The Podfile post_install hook runs during `pod install`, which
- *   happens after prebuild — by that point the extension's Info.plist exists.
+ * expo-share-intent creates the extension target with a hardcoded
+ * CURRENT_PROJECT_VERSION = "1" in the target's build settings, overriding
+ * the project-level value. EAS injects the correct build number at the project
+ * level, but the target override takes precedence — so the extension always
+ * reports version "1" regardless of the actual build number.
  *
- * The plist values are set to Xcode build variables ($(CURRENT_PROJECT_VERSION)
- * and $(MARKETING_VERSION)) so they resolve correctly at Xcode build time
- * regardless of how the build number was set (auto-increment or manual).
+ * Fix: use withXcodeProject to delete the CURRENT_PROJECT_VERSION and
+ * MARKETING_VERSION overrides from the extension target's build configurations,
+ * so the target inherits the values EAS sets at the project level.
  */
-const { withDangerousMod } = require('@expo/config-plugins');
-const fs = require('fs');
-const path = require('path');
-
-const MARKER = '[withShareExtensionVersion]';
-
-const HOOK = `
-  # Sync ShareExtension version with parent app ${MARKER}
-  ios_root = File.expand_path('..', installer.sandbox.root.to_s)
-  puts "[withShareExtensionVersion] Searching in #{ios_root}"
-  Dir.glob(File.join(ios_root, '*', 'Info.plist')).each do |plist_path|
-    puts "[withShareExtensionVersion] Found plist: #{plist_path}"
-    next unless plist_path.downcase.include?('shareextension') || plist_path.downcase.include?('share_extension')
-    system('/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleVersion $(CURRENT_PROJECT_VERSION)', plist_path)
-    system('/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleShortVersionString $(MARKETING_VERSION)', plist_path)
-    puts "[withShareExtensionVersion] Patched #{plist_path}"
-  end
-`;
+const { withXcodeProject } = require('@expo/config-plugins');
 
 module.exports = function withShareExtensionVersion(config) {
-  return withDangerousMod(config, [
-    'ios',
-    (modConfig) => {
-      const podfilePath = path.join(modConfig.modRequest.platformProjectRoot, 'Podfile');
-      let podfile = fs.readFileSync(podfilePath, 'utf8');
+  return withXcodeProject(config, (modConfig) => {
+    const xcodeProject = modConfig.modResults;
 
-      // Already injected — skip
-      if (podfile.includes(MARKER)) {
-        return modConfig;
-      }
+    const nativeTargets = xcodeProject.pbxNativeTargetSection();
+    const buildConfigs = xcodeProject.pbxXCBuildConfigurationSection();
+    const configLists = xcodeProject.pbxXCConfigurationListSection();
 
-      if (podfile.includes('post_install do |installer|')) {
-        // Insert into existing post_install block
-        podfile = podfile.replace(
-          /post_install do \|installer\|/,
-          `post_install do |installer|\n${HOOK}`
+    for (const [, target] of Object.entries(nativeTargets)) {
+      if (typeof target !== 'object' || !target.name) continue;
+      const targetName = target.name.replace(/"/g, '');
+      if (!targetName.toLowerCase().includes('shareextension')) continue;
+
+      console.log(`[withShareExtensionVersion] Found extension target: ${targetName}`);
+
+      const configList = configLists[target.buildConfigurationList];
+      if (!configList?.buildConfigurations) continue;
+
+      for (const configRef of configList.buildConfigurations) {
+        const buildConfig = buildConfigs[configRef.value];
+        if (!buildConfig?.buildSettings) continue;
+
+        // Remove hardcoded overrides so the target inherits project-level values
+        // that EAS sets correctly at build time
+        delete buildConfig.buildSettings.CURRENT_PROJECT_VERSION;
+        delete buildConfig.buildSettings.MARKETING_VERSION;
+
+        console.log(
+          `[withShareExtensionVersion] Cleared version overrides in ${buildConfig.name ?? configRef.value}`
         );
-      } else {
-        // No post_install block yet — create one
-        podfile += `\npost_install do |installer|\n${HOOK}\nend\n`;
       }
+    }
 
-      fs.writeFileSync(podfilePath, podfile);
-      console.log('[withShareExtensionVersion] Injected post_install hook into Podfile');
-      return modConfig;
-    },
-  ]);
+    return modConfig;
+  });
 };
