@@ -1,70 +1,58 @@
 /**
  * Config plugin that syncs the Share Extension's CFBundleVersion and
- * CFBundleShortVersionString with the main app's values.
+ * CFBundleShortVersionString with the main app by injecting a Ruby snippet
+ * into the Podfile's post_install hook.
  *
- * expo-share-intent creates an iOS Share Extension with a hardcoded
- * CFBundleVersion of "1". Apple requires the extension version to match
- * the parent app's version, or the app may be rejected / crash on launch.
+ * Why Podfile instead of withDangerousMod:
+ *   expo-share-intent creates the extension files *after* all withDangerousMod
+ *   hooks have run, so a direct file patch always fires too early and finds
+ *   nothing. The Podfile post_install hook runs during `pod install`, which
+ *   happens after prebuild — by that point the extension's Info.plist exists.
+ *
+ * The plist values are set to Xcode build variables ($(CURRENT_PROJECT_VERSION)
+ * and $(MARKETING_VERSION)) so they resolve correctly at Xcode build time
+ * regardless of how the build number was set (auto-increment or manual).
  */
 const { withDangerousMod } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
+const MARKER = '[withShareExtensionVersion]';
+
+const HOOK = `
+  # Sync ShareExtension version with parent app ${MARKER}
+  Dir.glob(File.join(installer.sandbox.root.to_s, '..', '*ShareExtension', 'Info.plist')).each do |plist_path|
+    system('/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleVersion $(CURRENT_PROJECT_VERSION)', plist_path)
+    system('/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleShortVersionString $(MARKETING_VERSION)', plist_path)
+    puts "[withShareExtensionVersion] Patched #{plist_path}"
+  end
+`;
+
 module.exports = function withShareExtensionVersion(config) {
   return withDangerousMod(config, [
     'ios',
     (modConfig) => {
-      const iosRoot = modConfig.modRequest.platformProjectRoot;
-      const appVersion = modConfig.version || '1.0.0';
-      // Use $(CURRENT_PROJECT_VERSION) so EAS can inject the build number at
-      // build time — same mechanism the main app target uses.
-      const buildVersion = '$(CURRENT_PROJECT_VERSION)';
+      const podfilePath = path.join(modConfig.modRequest.platformProjectRoot, 'Podfile');
+      let podfile = fs.readFileSync(podfilePath, 'utf8');
 
-      // expo-share-intent names the extension target "<AppName>ShareExtension"
-      // Walk the ios/ directory to find any *ShareExtension/Info.plist files.
-      let found = false;
-      try {
-        const entries = fs.readdirSync(iosRoot, { withFileTypes: true });
-        for (const entry of entries) {
-          if (
-            entry.isDirectory() &&
-            entry.name.toLowerCase().includes('shareextension')
-          ) {
-            const plistPath = path.join(iosRoot, entry.name, 'Info.plist');
-            if (fs.existsSync(plistPath)) {
-              let content = fs.readFileSync(plistPath, 'utf8');
-
-              // Patch CFBundleVersion
-              content = content.replace(
-                /<key>CFBundleVersion<\/key>\s*<string>[^<]*<\/string>/,
-                `<key>CFBundleVersion</key>\n\t<string>${buildVersion}</string>`
-              );
-
-              // Patch CFBundleShortVersionString
-              content = content.replace(
-                /<key>CFBundleShortVersionString<\/key>\s*<string>[^<]*<\/string>/,
-                `<key>CFBundleShortVersionString</key>\n\t<string>${appVersion}</string>`
-              );
-
-              fs.writeFileSync(plistPath, content);
-              console.log(
-                `[withShareExtensionVersion] Patched ${plistPath} → version ${appVersion} / build ${buildVersion}`
-              );
-              found = true;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[withShareExtensionVersion] Could not patch extension plist:', e.message);
+      // Already injected — skip
+      if (podfile.includes(MARKER)) {
+        return modConfig;
       }
 
-      if (!found) {
-        console.warn(
-          '[withShareExtensionVersion] No ShareExtension Info.plist found — skipping patch. ' +
-            'This is expected on the first prebuild run; it will be applied on subsequent builds.'
+      if (podfile.includes('post_install do |installer|')) {
+        // Insert into existing post_install block
+        podfile = podfile.replace(
+          /post_install do \|installer\|/,
+          `post_install do |installer|\n${HOOK}`
         );
+      } else {
+        // No post_install block yet — create one
+        podfile += `\npost_install do |installer|\n${HOOK}\nend\n`;
       }
 
+      fs.writeFileSync(podfilePath, podfile);
+      console.log('[withShareExtensionVersion] Injected post_install hook into Podfile');
       return modConfig;
     },
   ]);
