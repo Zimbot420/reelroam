@@ -23,7 +23,7 @@ const HOOK = `
   # Sync ShareExtension version with parent app ${MARKER}
   ios_root = File.expand_path('..', installer.sandbox.root.to_s)
   puts "[withShareExtensionVersion] Searching in #{ios_root}"
-  Dir.glob(File.join(ios_root, '**', 'Info.plist')).reject { |p| p.include?('/Pods/') || p.include?('/build/') }.each do |plist_path|
+  Dir.glob(File.join(ios_root, '*', 'Info.plist')).each do |plist_path|
     puts "[withShareExtensionVersion] Found plist: #{plist_path}"
     next unless plist_path.downcase.include?('shareextension') || plist_path.downcase.include?('share_extension')
     system('/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleVersion $(CURRENT_PROJECT_VERSION)', plist_path)
