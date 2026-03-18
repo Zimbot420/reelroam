@@ -143,7 +143,15 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "scrollaway",
+          "project": "react-native",
+          "url": "https://sentry.io/"
+        }
+      ]
     ],
     "extra": {
       "router": {},
