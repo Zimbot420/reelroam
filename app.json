@@ -3,7 +3,7 @@
     "name": "ScrollAway",
     "slug": "reelroam",
     "scheme": "scrollaway",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "updates": {
       "url": "https://u.expo.dev/2716a19d-fb0f-4b7b-a300-69c99b9fbf61",
       "enabled": true,
@@ -130,15 +130,13 @@
         "expo-build-properties",
         {
           "ios": {
-            "newArchEnabled": false,
             "deploymentTarget": "15.1",
             "xcconfig": {
               "SWIFT_STRICT_CONCURRENCY": "minimal"
             }
           },
-          "android": {
-            "newArchEnabled": false
-          }
+          "android": {}
+
         }
       ],
       "expo-font",
