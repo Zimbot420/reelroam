@@ -96,14 +96,15 @@ export default function HomeScreen() {
   const { t, interpolate } = useLanguage();
   const [inputUrl, setInputUrl] = useState('');
   const detectedPlatform = detectPlatform(inputUrl);
-  const btnScale = useRef(new Animated.Value(1)).current;
+  const btnOpacity = useRef(new Animated.Value(1)).current;
   const { count: unreadCount } = useUnreadNotifications();
 
+  // No transform styles allowed — reanimated 4.1.6 Fabric bug causes SIGABRT
   function pressIn() {
-    Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 30 }).start();
+    Animated.timing(btnOpacity, { toValue: 0.6, duration: 80, useNativeDriver: true }).start();
   }
   function pressOut() {
-    Animated.spring(btnScale, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+    Animated.timing(btnOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
   }
 
   function handleGenerate() {
@@ -312,7 +313,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             )}
             {/* Inline Generate Trip button */}
-            <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+            <Animated.View style={{ opacity: btnOpacity }}>
               <TouchableOpacity
                 onPress={handleGenerate}
                 onPressIn={pressIn}

@@ -6,48 +6,42 @@ const LOTTIE_SIZE = 290;
 const TEAL = '#0D9488';
 const TEAL_BRIGHT = '#2DD4BF';
 
+/**
+ * IMPORTANT: No `transform` styles allowed here. Reanimated 4.1.6's native
+ * Fabric hook processes ALL views' transforms through its buggy CSS matrix
+ * engine, causing SIGABRT on startup. Using opacity-only entrance instead.
+ */
 export default function SpinningGlobe() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.88)).current;
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 900,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        friction: 7,
-        tension: 50,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 900,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
   }, []);
 
   return (
     <View style={{ width: '100%', height: 300, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Equatorial orbit ring */}
+      {/* Equatorial orbit ring — rendered as a flat ellipse via height instead of transform scaleY */}
       <View
         pointerEvents="none"
         style={{
           position: 'absolute',
           width: LOTTIE_SIZE + 48,
-          height: LOTTIE_SIZE + 48,
+          height: Math.round((LOTTIE_SIZE + 48) * 0.31),
           borderRadius: (LOTTIE_SIZE + 48) / 2,
           borderWidth: 1,
           borderColor: `${TEAL}1A`,
-          transform: [{ scaleY: 0.31 }],
         }}
       />
 
-      {/* Lottie globe — fade + scale-spring entrance */}
+      {/* Lottie globe — fade entrance (no scale transform) */}
       <Animated.View
         style={{
           opacity: fadeAnim,
-          transform: [{ scale: scaleAnim }],
           shadowColor: TEAL_BRIGHT,
           shadowOpacity: 0.18,
           shadowRadius: 32,

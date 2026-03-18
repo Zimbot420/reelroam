@@ -3,8 +3,9 @@
  * Never mounts/unmounts — eliminates the flash that occurred when
  * navigating between the (tabs) navigator and profile/[username].
  *
- * Uses RN's built-in Animated API (not react-native-reanimated) to avoid
- * a native crash in reanimated 4.1.6's CSS transform matrix composition.
+ * IMPORTANT: No `transform` styles allowed here. Reanimated 4.1.6's native
+ * Fabric hook processes ALL views' transforms through its buggy CSS matrix
+ * engine, causing SIGABRT on startup. Using opacity-only animations instead.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Text, TouchableOpacity, View } from 'react-native';
@@ -28,10 +29,7 @@ const TAB_KEYS = [
   { name: 'profile',  labelKey: 'profile',  icon: 'person-circle-outline', filledIcon: 'person-circle', path: '/profile'  },
 ] as const;
 
-// Spring configs (RN Animated uses the same mass/damping/stiffness params)
-const SPRING_PRESS   = { mass: 0.35, damping: 10, stiffness: 320, useNativeDriver: true } as const;
-const SPRING_RELEASE = { mass: 0.7,  damping: 13, stiffness: 200, useNativeDriver: true } as const;
-const SPRING_ACTIVE  = { mass: 0.5,  damping: 14, stiffness: 200, useNativeDriver: true } as const;
+const SPRING_ACTIVE = { mass: 0.5, damping: 14, stiffness: 200, useNativeDriver: true } as const;
 
 function resolveActiveTab(pathname: string): string {
   if (pathname.startsWith('/profile'))  return 'profile';
@@ -66,36 +64,25 @@ interface TabItemProps {
 }
 
 function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProps) {
-  const scale          = useRef(new Animated.Value(1)).current;
-  const translateY     = useRef(new Animated.Value(0)).current;
   const activeProgress = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
-  const dotScale       = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
+  const pressOpacity   = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.spring(activeProgress, { toValue: isFocused ? 1 : 0, ...SPRING_ACTIVE }).start();
-    Animated.spring(dotScale,       { toValue: isFocused ? 1 : 0, ...SPRING_ACTIVE }).start();
   }, [isFocused]);
 
   function handlePressIn() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Animated.spring(scale,      { toValue: 0.78, ...SPRING_PRESS }).start();
-    Animated.spring(translateY, { toValue: -4,   ...SPRING_PRESS }).start();
+    Animated.timing(pressOpacity, { toValue: 0.5, duration: 80, useNativeDriver: true }).start();
   }
 
   function handlePressOut() {
-    Animated.spring(scale,      { toValue: 1, ...SPRING_RELEASE }).start();
-    Animated.spring(translateY, { toValue: 0, ...SPRING_RELEASE }).start();
+    Animated.timing(pressOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
   }
 
-  // Interpolated values for icon cross-dissolve
+  // Interpolated values for icon cross-dissolve (opacity only — no transforms)
   const outlineOpacity = activeProgress.interpolate({
     inputRange: [0, 1], outputRange: [1, 0], extrapolate: 'clamp',
-  });
-  const outlineScale = activeProgress.interpolate({
-    inputRange: [0, 1], outputRange: [1, 0.45], extrapolate: 'clamp',
-  });
-  const filledScale = activeProgress.interpolate({
-    inputRange: [0, 1], outputRange: [0.45, 1], extrapolate: 'clamp',
   });
   const glowOpacity = activeProgress.interpolate({
     inputRange: [0, 1], outputRange: [0, 0.85], extrapolate: 'clamp',
@@ -109,7 +96,7 @@ function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProp
       activeOpacity={1}
       style={{ flex: 1, alignItems: 'center' }}
     >
-      <Animated.View style={{ alignItems: 'center', transform: [{ scale }, { translateY }] }}>
+      <Animated.View style={{ alignItems: 'center', opacity: pressOpacity }}>
 
         {/* Glow halo behind icon */}
         <Animated.View
@@ -128,14 +115,13 @@ function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProp
           }}
         />
 
-        {/* Icon morph: outline ↔ filled cross-dissolve */}
+        {/* Icon morph: outline ↔ filled cross-dissolve (opacity only) */}
         <View style={{ width: 24, height: 24 }}>
           <Animated.View
             style={{
               position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
               alignItems: 'center', justifyContent: 'center',
               opacity: outlineOpacity,
-              transform: [{ scale: outlineScale }],
             }}
           >
             <Ionicons name={tab.icon as any} size={24} color="rgba(255,255,255,0.38)" />
@@ -145,7 +131,6 @@ function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProp
               position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
               alignItems: 'center', justifyContent: 'center',
               opacity: activeProgress,
-              transform: [{ scale: filledScale }],
             }}
           >
             <Ionicons name={tab.filledIcon as any} size={24} color={TEAL} />
@@ -178,7 +163,7 @@ function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProp
           {label}
         </Text>
 
-        {/* Active dot — springs in */}
+        {/* Active dot — fades in */}
         <Animated.View
           style={{
             width: 4, height: 4,
@@ -189,8 +174,7 @@ function TabItem({ tab, isFocused, hasNewTrips, label, onNavigate }: TabItemProp
             shadowOpacity: 0.9,
             shadowRadius: 5,
             elevation: 4,
-            transform: [{ scale: dotScale }],
-            opacity: dotScale,
+            opacity: activeProgress,
           }}
         />
       </Animated.View>
