@@ -11,5 +11,15 @@ module.exports = {
   theme: {
     extend: {},
   },
+  // Disable CSS transform utilities to avoid triggering reanimated's
+  // buggy Fabric CSS transform processor (SIGABRT in TransformOp).
+  corePlugins: {
+    transform: false,
+    translate: false,
+    rotate: false,
+    scale: false,
+    skew: false,
+    transformOrigin: false,
+  },
   plugins: [],
 };

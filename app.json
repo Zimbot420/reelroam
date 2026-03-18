@@ -130,20 +130,26 @@
         "expo-build-properties",
         {
           "ios": {
-            "newArchEnabled": false,
             "deploymentTarget": "15.1",
             "xcconfig": {
               "SWIFT_STRICT_CONCURRENCY": "minimal"
             }
           },
           "android": {
-            "newArchEnabled": false
           }
 
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "scrollaway",
+          "project": "react-native",
+          "url": "https://sentry.io/"
+        }
+      ]
     ],
     "extra": {
       "router": {},

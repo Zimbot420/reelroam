@@ -1,7 +1,6 @@
 import '../global.css';
 
-// Sentry temporarily disabled (native module excluded) to isolate a startup crash.
-// import * as Sentry from '@sentry/react-native';
+import * as Sentry from '@sentry/react-native';
 import { useEffect, Component } from 'react';
 import { ToastAndroid, Platform, Alert, View, Text, ScrollView } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -13,10 +12,17 @@ import { AuthProvider, useAuth } from '../lib/context/AuthContext';
 import { LanguageProvider } from '../lib/context/LanguageContext';
 import AppTabBar from '../components/AppTabBar';
 
+Sentry.init({
+  dsn: 'https://8934484315746b2c1af4a321d40d971b@o4511066059177984.ingest.de.sentry.io/4511066064814160',
+  enableNative: true,
+  sendDefaultPii: false,
+  tracesSampleRate: 0.2,
+});
+
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error) { console.error('ErrorBoundary caught:', error); }
+  componentDidCatch(error: Error) { Sentry.captureException(error); }
   render() {
     if (this.state.error) {
       const err = this.state.error as Error;
@@ -100,16 +106,15 @@ export default function RootLayout() {
         <ShareIntentProvider>
           <ShareIntentHandler />
           <View style={{ flex: 1 }}>
-            <Stack screenOptions={{ headerShown: false, animation: 'ios' }}>
-              {/* Trip detail: fade from bottom gives a "card expanding" feel */}
-              <Stack.Screen name="trip/[slug]"       options={{ animation: 'fade_from_bottom', gestureEnabled: true }} />
-              {/* Modal screens */}
-              <Stack.Screen name="processing"        options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="upgrade"           options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="notifications"     options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="onboarding"        options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="auth"              options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="past-trip"         options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            {/* ALL animations disabled to avoid reanimated Fabric CSS transform crash */}
+            <Stack screenOptions={{ headerShown: false, animation: 'none' }}>
+              <Stack.Screen name="trip/[slug]"       options={{ gestureEnabled: true }} />
+              <Stack.Screen name="processing"        options={{}} />
+              <Stack.Screen name="upgrade"           options={{}} />
+              <Stack.Screen name="notifications"     options={{}} />
+              <Stack.Screen name="onboarding"        options={{}} />
+              <Stack.Screen name="auth"              options={{}} />
+              <Stack.Screen name="past-trip"         options={{ presentation: 'fullScreenModal' }} />
             </Stack>
             <AppTabBar />
           </View>
