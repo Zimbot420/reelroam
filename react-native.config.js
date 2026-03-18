@@ -10,10 +10,11 @@ module.exports = {
         android: null,
       },
     },
-    // Temporarily exclude Sentry native code to isolate a
+    // Temporarily exclude reanimated native code to isolate a
     // dispatch_once crash (nil object in NSDictionary during
-    // native module init). JS Sentry calls become no-ops.
-    '@sentry/react-native': {
+    // native module init). Reanimated 3.19.x may be incompatible
+    // with RN 0.81.5 — its constantsToExport likely returns nil.
+    'react-native-reanimated': {
       platforms: {
         ios: null,
         android: null,
