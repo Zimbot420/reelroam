@@ -735,8 +735,6 @@ export default function ProfileScreen() {
     await AsyncStorage.setItem(AUTO_POPULATE_KEY, 'true').catch(() => {});
   }, []);
 
-  if (loading) return <ProfileSkeleton />;
-
   const displayName = profile?.display_name ?? profile?.username ?? username ?? 'Traveler';
   const bio = profile?.bio ?? null;
   const homeCountry = profile?.home_country ?? null;
@@ -774,6 +772,8 @@ export default function ProfileScreen() {
       : pastTrips;
     return applySort(matched);
   }, [pastTrips, searchQuery, sortOrder]);
+
+  if (loading) return <ProfileSkeleton />;
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
