@@ -107,6 +107,62 @@ No prefix = server/edge function only.
 | preview | `eas build --profile preview` | TestFlight / internal APK testing |
 | production | `eas build --profile production` | App Store + Play Store submission |
 
+## OTA Updates (expo-updates) — USE THIS INSTEAD OF REBUILDING
+
+`expo-updates` is installed and configured. For any **JavaScript/TypeScript-only change**, push an OTA update instead of triggering a full EAS build.
+
+### When to use OTA update (fast, ~2 min)
+- Bug fixes in `.tsx` / `.ts` files
+- UI changes, new screens, component changes
+- API call changes, logic changes
+- Any change that does NOT touch native code
+
+### When a full rebuild is required (slow, ~15-20 min)
+- Installing a new npm package that has native code
+- Changes to `app.json` (permissions, bundle ID, etc.)
+- Changes to `/ios` or `/android` folders
+- Bumping `version` in `app.json` (required after native changes)
+
+### OTA update commands
+
+Push to test users (preview build / TestFlight):
+```bash
+eas update --branch preview --message "describe what changed"
+```
+
+Push to production (App Store / Play Store):
+```bash
+eas update --branch production --message "describe what changed"
+```
+
+Push to development builds:
+```bash
+eas update --branch development --message "describe what changed"
+```
+
+### How it works
+- Each build profile has a `channel` in `eas.json` (development / preview / production)
+- `eas update --branch <channel>` pushes a new JS bundle to that channel
+- Users receive the update **automatically on next app launch** (no action required from them)
+- `runtimeVersion` policy is `appVersion` — OTA bundles are only delivered to builds with a matching `version` in `app.json`
+
+### IMPORTANT: Bumping version after native changes
+If you install a native package and do a new build, bump `version` in `app.json` first (e.g. `"1.0.0"` → `"1.1.0"`). This prevents old builds from receiving a JS bundle that depends on native code they don't have.
+
+## UI/UX Design Skill
+
+A **UI/UX Pro Max** skill is installed at `~/.claude/skills/ui-ux-pro-max/SKILL.md`.
+
+Before working on **ANY** task that involves:
+- Building or modifying screens or components
+- Designing layouts, cards, buttons, or any visual elements
+- Improving the look and feel of any part of the app
+- Creating new UI from scratch
+
+You **MUST** invoke the skill via the Skill tool (`skill: "ui-ux-pro-max"`) and follow its guidelines. Apply its principles to produce premium, polished, production-quality UI. **Do not skip this step.**
+
+This app uses **React Native** — use the skill's React Native stack rules and always pair design decisions with NativeWind `className` utility classes (never `StyleSheet.create`).
+
 ## Coding Rules
 1. **Always use NativeWind `className`** for styling — never `StyleSheet.create`
 2. **All API logic** (Claude calls, external HTTP) goes in `/lib/api/`
@@ -114,6 +170,7 @@ No prefix = server/edge function only.
 4. **Never expose server-side keys** client-side — `ANTHROPIC_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are server/edge function only
 5. **Commit to GitHub** after each working feature: `git add`, `git commit`, `git push`
 6. **Install packages** with `--legacy-peer-deps` due to known react-dom peer dep conflict in Expo 54
+8. **Installing native packages** — If a feature clearly benefits from a native npm package, go ahead and install it. Inform the user that it requires a full EAS rebuild (not an OTA update), and that they are willing to do the rebuild. Do not skip a useful native package just to avoid the rebuild.
 7. **Tailwind must stay at v3** — NativeWind v4 is incompatible with Tailwind v4
 
 ## Expo / EAS Config

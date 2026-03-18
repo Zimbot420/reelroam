@@ -7,6 +7,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
       "ios": {
         "simulator": false
       },
@@ -16,6 +17,14 @@
     },
     "preview": {
       "distribution": "store",
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://gxtukagbyjvxkuanqoxx.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4dHVrYWdieWp2eGt1YW5xb3h4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNzU5NTksImV4cCI6MjA4ODY1MTk1OX0.8tgVNnJY7UfJbnO389bOWKfttObYJ6n0KV4p5Xv9cN8",
+        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyADEu3-UhuvGiZnmH_6yuwFcmFmmUZsAxM",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_YJsLrAEGHqrozMJDWwWorMdcvhG",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_KEY": "goog_BJSEmisOWAIaAsrgTVLwEcdLdYl"
+      },
       "ios": {
         "simulator": false
       },
@@ -25,6 +34,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "channel": "production",
       "ios": {
         "simulator": false
       },

@@ -2,10 +2,14 @@ import '../global.css';
 
 import { useEffect, Component } from 'react';
 import { ToastAndroid, Platform, Alert, View, Text, ScrollView } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { useShareIntent } from '../hooks/useShareIntent';
 import { initializePurchases } from '../lib/purchases';
+import { AuthProvider, useAuth } from '../lib/context/AuthContext';
+import { LanguageProvider } from '../lib/context/LanguageContext';
+import AppTabBar from '../components/AppTabBar';
 
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -28,6 +32,29 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
     }
     return this.props.children;
   }
+}
+
+// ─── Navigation guard ─────────────────────────────────────────────────────────
+// Redirects authenticated users away from auth screens.
+// Does NOT force unauthenticated users to log in — the app supports guest use.
+
+function NavigationGuard() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === 'auth';
+
+    // If already signed in, bounce away from auth screens to home
+    if (isAuthenticated && inAuthGroup) {
+      router.replace('/(tabs)' as any);
+    }
+  }, [isAuthenticated, isLoading, segments]);
+
+  return null;
 }
 
 function ShareIntentHandler() {
@@ -62,11 +89,31 @@ export default function RootLayout() {
   }, [])
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <ErrorBoundary>
-      <ShareIntentProvider>
-        <ShareIntentHandler />
-        <Stack />
-      </ShareIntentProvider>
+      <LanguageProvider>
+      <AuthProvider>
+        <NavigationGuard />
+        <ShareIntentProvider>
+          <ShareIntentHandler />
+          <View style={{ flex: 1 }}>
+            <Stack screenOptions={{ headerShown: false, animation: 'ios' }}>
+              {/* Trip detail: fade from bottom gives a "card expanding" feel */}
+              <Stack.Screen name="trip/[slug]"       options={{ animation: 'fade_from_bottom', gestureEnabled: true }} />
+              {/* Modal screens */}
+              <Stack.Screen name="processing"        options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="upgrade"           options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="notifications"     options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="onboarding"        options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="auth"              options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="past-trip"         options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+            </Stack>
+            <AppTabBar />
+          </View>
+        </ShareIntentProvider>
+      </AuthProvider>
+      </LanguageProvider>
     </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }

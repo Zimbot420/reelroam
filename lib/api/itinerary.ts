@@ -18,7 +18,15 @@ export async function generateItinerary(params: GenerateParams): Promise<Generat
     body: params,
   })
 
-  if (error) throw new Error(error.message ?? 'Generation failed')
+  if (error) {
+    try {
+      const body = await (error as any).context?.json?.()
+      if (body?.error) throw new Error(body.error)
+    } catch (inner) {
+      if (inner instanceof Error && inner.message !== error.message) throw inner
+    }
+    throw new Error(error.message ?? 'Generation failed')
+  }
   if (data?.error) throw new Error(data.error)
 
   return data as GenerateResult

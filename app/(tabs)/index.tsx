@@ -1,23 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import SpinningGlobe from '../../components/SpinningGlobe';
-import { Trip } from '../../types';
-import { useRecentTrips } from '../../hooks/useRecentTrips';
 import { FREE_TRIP_LIMIT, useProStatus } from '../../hooks/useProStatus';
+import { useAuth } from '../../lib/context/AuthContext';
+import { useUnreadNotifications } from '../../hooks/useUnreadNotifications';
+import { useLanguage } from '../../lib/context/LanguageContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -45,9 +47,9 @@ function detectPlatform(url: string): string | null {
 }
 
 const PLATFORM_META: Record<string, { icon: string; color: string; label: string }> = {
-  tiktok:    { icon: 'musical-notes', color: '#000000', label: 'TikTok' },
-  instagram: { icon: 'camera',        color: '#E1306C', label: 'Instagram' },
-  youtube:   { icon: 'logo-youtube',  color: '#FF0000', label: 'YouTube' },
+  tiktok:    { icon: 'tiktok',     color: '#010101', label: 'TikTok' },
+  instagram: { icon: 'instagram',  color: '#E1306C', label: 'Instagram' },
+  youtube:   { icon: 'youtube',    color: '#FF0000', label: 'YouTube' },
 };
 
 // ─── Star field ───────────────────────────────────────────────────────────────
@@ -84,102 +86,18 @@ function StarField() {
   );
 }
 
-// ─── Skeleton shimmer ─────────────────────────────────────────────────────────
-
-function SkeletonShimmer({ width, height, borderRadius = 10 }: { width: number | string; height: number; borderRadius?: number }) {
-  const opacity = useRef(new Animated.Value(0.3)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.3, duration: 700, useNativeDriver: true }),
-      ])
-    ).start();
-  }, []);
-  return (
-    <Animated.View style={{ opacity, width: width as any, height, borderRadius, backgroundColor: '#ffffff15', marginRight: 12 }} />
-  );
-}
-
-// ─── Trip image card ──────────────────────────────────────────────────────────
-
-async function fetchCardImage(locationName: string): Promise<string | null> {
-  try {
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) return null;
-    const res = await fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(locationName)}&inputtype=textquery&fields=photos&key=${apiKey}`,
-    );
-    const json = await res.json();
-    const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-    if (!ref) return null;
-    return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${ref}&key=${apiKey}`;
-  } catch {
-    return null;
-  }
-}
-
-function TripImageCard({ trip, onPress }: { trip: Trip; onPress: () => void }) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const destination =
-    trip.title ??
-    (trip.locations?.[0]?.name ? `Trip to ${trip.locations[0].name}` : 'Untitled Trip');
-  const dayCount = trip.itinerary?.totalDays ?? 0;
-
-  useEffect(() => {
-    const locationName = trip.locations?.[0]?.name ?? trip.title;
-    if (locationName) {
-      fetchCardImage(locationName).then(setImageUrl);
-    }
-  }, [trip.id]);
-
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.85}
-      style={{ width: 150, height: 180, borderRadius: 16, marginRight: 12, overflow: 'hidden' }}
-    >
-      {imageUrl ? (
-        <ExpoImage
-          source={{ uri: imageUrl }}
-          contentFit="cover"
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
-      ) : (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0D9488' }} />
-      )}
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.85)']}
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 110 }}
-      />
-      <Text
-        numberOfLines={2}
-        style={{
-          position: 'absolute', bottom: 24, left: 10, right: 10,
-          color: 'white', fontSize: 14, fontWeight: '700', lineHeight: 18,
-        }}
-      >
-        {destination}
-      </Text>
-      {dayCount > 0 && (
-        <Text style={{ position: 'absolute', bottom: 8, left: 10, color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>
-          {dayCount} {dayCount === 1 ? 'day' : 'days'}
-        </Text>
-      )}
-    </TouchableOpacity>
-  );
-}
-
 // ─── Home screen ──────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { trips, isLoading } = useRecentTrips();
   const { isPro, tripsRemaining, isLoaded } = useProStatus();
+  const { user, isAuthenticated } = useAuth();
+  const { t, interpolate } = useLanguage();
   const [inputUrl, setInputUrl] = useState('');
   const detectedPlatform = detectPlatform(inputUrl);
   const btnScale = useRef(new Animated.Value(1)).current;
+  const { count: unreadCount } = useUnreadNotifications();
 
   function pressIn() {
     Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 30 }).start();
@@ -202,6 +120,47 @@ export default function HomeScreen() {
       {/* Star field */}
       <StarField />
 
+      {/* ── Notification bell (top-right, only when signed in) ── */}
+      {isAuthenticated && (
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/notifications' as any);
+          }}
+          style={{
+            position: 'absolute',
+            top: insets.top + 10,
+            right: 16,
+            zIndex: 10,
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="notifications-outline" size={22} color="rgba(255,255,255,0.7)" />
+          {unreadCount > 0 && (
+            <View
+              style={{
+                position: 'absolute',
+                top: 4,
+                right: 4,
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: '#ef4444',
+              }}
+            />
+          )}
+        </TouchableOpacity>
+      )}
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={insets.top}
+      >
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: isPro ? insets.bottom + 20 : bannerHeight + 8 }}
@@ -209,72 +168,116 @@ export default function HomeScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {/* ── Header ── */}
-        <View style={{ paddingTop: 60, alignItems: 'center', paddingBottom: 4 }}>
-          <Text style={{ fontSize: 42, fontWeight: '700', color: 'white', letterSpacing: -0.5 }}>
+        <View style={{ paddingTop: 64, alignItems: 'center', paddingBottom: 4 }}>
+          <Text style={{ fontSize: 48, fontWeight: '800', color: 'white', letterSpacing: -1.5, lineHeight: 54 }}>
             ScrollAway
           </Text>
-          <Text style={{ fontSize: 16, color: 'rgba(255,255,255,0.5)', letterSpacing: 2, marginTop: 6 }}>
-            Share. Explore. Go.
+          <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.38)', letterSpacing: 3.5, marginTop: 8, fontWeight: '300', textTransform: 'uppercase' }}>
+            {t.home.tagline}
           </Text>
         </View>
 
         {/* ── Globe ── */}
         <View style={{ position: 'relative', alignItems: 'center' }}>
-          {/* Teal glow behind globe */}
+          {/* Outer bloom — wide halo behind the Lottie */}
           <View
             pointerEvents="none"
             style={{
               position: 'absolute',
-              top: 40,
-              width: 280,
-              height: 280,
-              borderRadius: 140,
+              top: -10,
+              width: 390,
+              height: 390,
+              borderRadius: 195,
               backgroundColor: '#0D9488',
-              opacity: 0.15,
+              opacity: 0.045,
               shadowColor: '#0D9488',
-              shadowOpacity: 0.8,
-              shadowRadius: 60,
-              elevation: 40,
+              shadowOpacity: 0.55,
+              shadowRadius: 90,
+              elevation: 20,
+            }}
+          />
+          {/* Inner bloom — sits just inside the globe edge */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 20,
+              width: 290,
+              height: 290,
+              borderRadius: 145,
+              backgroundColor: '#0D9488',
+              opacity: 0.10,
+              shadowColor: '#0D9488',
+              shadowOpacity: 0.85,
+              shadowRadius: 55,
+              elevation: 30,
             }}
           />
           <SpinningGlobe />
         </View>
 
         {/* ── Platform icons ── */}
-        <View style={{ alignItems: 'center', marginTop: -8 }}>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={{ alignItems: 'center', marginTop: -4 }}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
             {(['tiktok', 'instagram', 'youtube'] as const).map((p) => (
               <View
                 key={p}
                 style={{
-                  width: 52, height: 52, borderRadius: 14,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                  width: 48, height: 48, borderRadius: 14,
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
                   alignItems: 'center', justifyContent: 'center',
+                  shadowColor: '#000',
+                  shadowOpacity: 0.3,
+                  shadowRadius: 6,
+                  shadowOffset: { width: 0, height: 2 },
+                  elevation: 3,
                 }}
               >
-                <Ionicons name={PLATFORM_META[p].icon as any} size={24} color="white" />
+                {/* Top highlight line — simulates light source */}
+                <View style={{
+                  position: 'absolute', top: 0, left: 4, right: 4, height: 1,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderRadius: 1,
+                }} />
+                <FontAwesome5 name={PLATFORM_META[p].icon} size={20} color="rgba(255,255,255,0.7)" brand />
               </View>
             ))}
           </View>
-          <Ionicons name="chevron-down" size={20} color="#0D9488" style={{ marginTop: 12 }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+            <Ionicons name="chevron-down" size={16} color="rgba(13,148,136,0.7)" />
+            <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+          </View>
         </View>
 
         {/* ── URL input ── */}
-        <View style={{ marginHorizontal: 20, marginTop: 12 }}>
+        <View style={{ marginHorizontal: 20, marginTop: 16 }}>
           <View
             style={{
               flexDirection: 'row',
-              height: 56,
-              borderRadius: 50,
-              backgroundColor: 'rgba(255,255,255,0.06)',
+              height: 58,
+              borderRadius: 16,
+              backgroundColor: 'rgba(255,255,255,0.07)',
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.12)',
+              borderColor: detectedPlatform ? 'rgba(13,148,136,0.5)' : 'rgba(255,255,255,0.11)',
               alignItems: 'center',
-              paddingLeft: 20,
+              paddingLeft: 16,
               paddingRight: 6,
+              shadowColor: detectedPlatform ? '#0D9488' : '#000',
+              shadowOpacity: detectedPlatform ? 0.2 : 0.15,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 4,
+              overflow: 'hidden',
             }}
           >
+            {/* Top highlight line inside input */}
+            <View style={{
+              position: 'absolute', top: 0, left: 12, right: 12, height: 1,
+              backgroundColor: 'rgba(255,255,255,0.07)',
+            }} />
+
             {detectedPlatform ? (
               <View
                 style={{
@@ -283,15 +286,15 @@ export default function HomeScreen() {
                   alignItems: 'center', justifyContent: 'center', marginRight: 10,
                 }}
               >
-                <Ionicons name={PLATFORM_META[detectedPlatform].icon as any} size={14} color="white" />
+                <FontAwesome5 name={PLATFORM_META[detectedPlatform].icon} size={13} color="white" brand />
               </View>
             ) : (
-              <Ionicons name="link-outline" size={18} color="rgba(255,255,255,0.25)" style={{ marginRight: 10 }} />
+              <Ionicons name="link-outline" size={17} color="rgba(255,255,255,0.22)" style={{ marginRight: 10 }} />
             )}
             <TextInput
-              style={{ flex: 1, color: 'white', fontSize: 14 }}
-              placeholder="https://www.link.on/URL"
-              placeholderTextColor="rgba(255,255,255,0.25)"
+              style={{ flex: 1, color: 'white', fontSize: 14, letterSpacing: 0.1 }}
+              placeholder={t.home.placeholder}
+              placeholderTextColor="rgba(255,255,255,0.22)"
               value={inputUrl}
               onChangeText={setInputUrl}
               autoCapitalize="none"
@@ -303,9 +306,9 @@ export default function HomeScreen() {
             {inputUrl.length > 0 && !detectedPlatform && (
               <TouchableOpacity
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setInputUrl(''); }}
-                style={{ padding: 6 }}
+                style={{ padding: 8 }}
               >
-                <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
+                <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.35)" />
               </TouchableOpacity>
             )}
             {/* Inline Generate Trip button */}
@@ -316,63 +319,57 @@ export default function HomeScreen() {
                 onPressOut={pressOut}
                 disabled={!detectedPlatform}
                 activeOpacity={0.85}
-                style={{
-                  height: 44,
-                  borderRadius: 44,
-                  paddingHorizontal: 16,
-                  backgroundColor: detectedPlatform ? '#0D9488' : 'rgba(255,255,255,0.08)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
               >
-                <Text style={{ color: detectedPlatform ? 'white' : 'rgba(255,255,255,0.3)', fontWeight: '600', fontSize: 14 }}>
-                  Generate Trip
-                </Text>
+                {detectedPlatform ? (
+                  <LinearGradient
+                    colors={['#0D9488', '#0a7a70']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={{
+                      height: 44,
+                      borderRadius: 12,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      shadowColor: '#0D9488',
+                      shadowOpacity: 0.45,
+                      shadowRadius: 8,
+                      shadowOffset: { width: 0, height: 2 },
+                      elevation: 5,
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>
+                      {t.home.generate}
+                    </Text>
+                  </LinearGradient>
+                ) : (
+                  <View
+                    style={{
+                      height: 44,
+                      borderRadius: 12,
+                      paddingHorizontal: 16,
+                      backgroundColor: 'rgba(255,255,255,0.06)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: 'rgba(255,255,255,0.25)', fontWeight: '600', fontSize: 14 }}>
+                      {t.home.generate}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </Animated.View>
           </View>
 
           {/* Helper text */}
-          <Text style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)', marginTop: 10 }}>
-            Share any travel video to get your AI itinerary instantly
+          <Text style={{ textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.22)', marginTop: 12, letterSpacing: 0.3 }}>
+            {t.home.helperText}
           </Text>
         </View>
 
-        {/* ── Recent trips ── */}
-        <View style={{ marginTop: 24 }}>
-          <Text style={{ fontSize: 20, fontWeight: '600', color: 'white', marginLeft: 20, marginBottom: 12 }}>
-            Recent Trips
-          </Text>
-
-          {isLoading ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 20, paddingRight: 8 }}>
-              <SkeletonShimmer width={150} height={180} borderRadius={16} />
-              <SkeletonShimmer width={150} height={180} borderRadius={16} />
-              <SkeletonShimmer width={150} height={180} borderRadius={16} />
-            </ScrollView>
-          ) : trips.length === 0 ? (
-            <Text style={{ color: 'rgba(255,255,255,0.25)', textAlign: 'center', fontSize: 14, marginHorizontal: 20 }}>
-              Your generated trips will appear here
-            </Text>
-          ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingLeft: 20, paddingRight: 8 }}
-            >
-              {trips.map((trip) => (
-                <TripImageCard
-                  key={trip.id}
-                  trip={trip}
-                  onPress={() =>
-                    router.push({ pathname: '/trip/[slug]' as any, params: { slug: trip.share_slug } })
-                  }
-                />
-              ))}
-            </ScrollView>
-          )}
-        </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* ── Pro banner (fixed bottom) ── */}
       {!isPro && (
@@ -399,10 +396,20 @@ export default function HomeScreen() {
               <Text style={{ color: 'white', fontSize: 14 }}>
                 {isLoaded ? (
                   tripsRemaining === 0
-                    ? <Text style={{ fontWeight: '600' }}>No free trips remaining</Text>
-                    : <Text><Text style={{ fontWeight: '600' }}>{tripsRemaining} free {tripsRemaining === 1 ? 'trip' : 'trips'} remaining</Text> · Upgrade to Pro</Text>
+                    ? <Text style={{ fontWeight: '600' }}>{t.home.noTripsRemaining}</Text>
+                    : <Text>
+                        <Text style={{ fontWeight: '600' }}>
+                          {interpolate(t.home.tripsRemainingBanner, { count: tripsRemaining })}
+                        </Text>
+                        {' · '}{t.home.upgradeToPro}
+                      </Text>
                 ) : (
-                  <Text><Text style={{ fontWeight: '600' }}>{FREE_TRIP_LIMIT} free trips/month</Text> · Upgrade to Pro</Text>
+                  <Text>
+                    <Text style={{ fontWeight: '600' }}>
+                      {interpolate(t.home.upgradeDefault, { count: FREE_TRIP_LIMIT })}
+                    </Text>
+                    {' · '}{t.home.upgradeToPro}
+                  </Text>
                 )}
               </Text>
             </View>

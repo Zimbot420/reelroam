@@ -15,10 +15,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  supabase,
   isUsernameAvailable,
   publishTrip,
   upsertProfile,
 } from '../lib/supabase';
+import { useAuth } from '../lib/context/AuthContext';
 
 const TEAL = '#0D9488';
 const PROFILE_KEY = '@user_profile';
@@ -50,6 +52,7 @@ export default function ShareToFeedModal({
   onClose,
   onShared,
 }: Props) {
+  const { isAuthenticated, username: authUsername } = useAuth();
   const [savedProfile, setSavedProfile] = useState<SavedProfile | null>(null);
   const [username, setUsername] = useState('');
   const [selectedEmoji, setSelectedEmoji] = useState('🌍');
@@ -72,6 +75,29 @@ export default function ShareToFeedModal({
   }, [visible]);
 
   async function loadSavedProfile() {
+    // 1. If the user is authenticated, always resolve their profile from Supabase
+    //    so they never have to create an account again on a new device / fresh install.
+    if (isAuthenticated && authUsername) {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('username, avatar_emoji')
+          .eq('username', authUsername)
+          .maybeSingle();
+        if (data) {
+          const profile: SavedProfile = {
+            username: data.username,
+            avatarEmoji: data.avatar_emoji ?? '🌍',
+          };
+          setSavedProfile(profile);
+          // Keep AsyncStorage in sync so offline / unauthenticated fallback works
+          AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile)).catch(() => {});
+          return;
+        }
+      } catch { /* fall through to AsyncStorage */ }
+    }
+
+    // 2. Fall back to locally stored profile (device-id based / anonymous users)
     try {
       const saved = await AsyncStorage.getItem(PROFILE_KEY);
       if (saved) {
@@ -194,9 +220,14 @@ export default function ShareToFeedModal({
             ) : (
               <>
                 {/* ── Header ── */}
-                <Text style={{ color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
-                  Share to Discovery Feed
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ color: 'white', fontSize: 20, fontWeight: '700', flex: 1, marginRight: 8 }}>
+                    Share to Discovery Feed
+                  </Text>
+                  <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 2 }}>
+                    <Ionicons name="close" size={24} color="rgba(255,255,255,0.5)" />
+                  </TouchableOpacity>
+                </View>
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginBottom: 24 }}>
                   Let other travelers get inspired by your trip
                 </Text>

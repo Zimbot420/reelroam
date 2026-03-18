@@ -98,18 +98,28 @@ Deno.serve(async (req) => {
     const system = `You are an expert travel itinerary planner. Generate detailed, realistic travel itineraries.
 Always return ONLY valid JSON — no markdown, no explanation, no code blocks.
 For coordinates: use precise lat/lng for every activity location. If unsure of exact coordinates, use the nearest city center — never return null or 0,0.
-Activity IDs must be unique strings like "act-1", "act-2", etc.`
+Activity IDs must be unique strings like "act-1", "act-2", etc.
+CRITICAL: All location names must be specific, full, Google-searchable proper names — e.g. "Senso-ji Temple Asakusa Tokyo" not "temple", "Eiffel Tower Paris" not "tower", "Tanah Lot Temple Bali" not "local temple". Prioritize the most famous, visually iconic, photogenic landmarks.`
 
     const prompt = `Create a ${days}-day travel itinerary for these locations:
 ${locationList}
 Region: ${region || 'Unknown'}
+
+IMPORTANT: For every stop, choose the most iconic, photogenic, visually stunning version of the place. Never use generic names like "local market", "a park", "the beach", "local temple" — always use the full proper name (e.g. "Chatuchak Weekend Market Bangkok", "Shinjuku Gyoen National Garden Tokyo", "Barceloneta Beach Barcelona").
 
 Return this exact JSON structure:
 {
   "title": "string (catchy trip title, e.g. 'Hidden Gems of Kyoto')",
   "destination": "string (main destination city/region)",
   "totalDays": number,
-  "coverImageQuery": "string (descriptive search query for a cover photo, e.g. 'Kyoto bamboo forest Japan')",
+  "coverImageQuery": "string (specific Google Places search query for a stunning cover photo, e.g. 'Shibuya Crossing Tokyo night' or 'Oia Village Santorini sunset')",
+  "photoLocations": [
+    {
+      "name": "string (SPECIFIC, full Google-searchable landmark name, e.g. 'Fushimi Inari Shrine Kyoto')",
+      "lat": number,
+      "lng": number
+    }
+  ],
   "days": [
     {
       "day": number,
@@ -119,7 +129,7 @@ Return this exact JSON structure:
           "id": "string (unique, e.g. 'act-1')",
           "name": "string",
           "description": "string (2-3 sentences)",
-          "locationName": "string (specific venue/place name)",
+          "locationName": "string (SPECIFIC full Google-searchable name, e.g. 'Senso-ji Temple Asakusa Tokyo' — never just 'temple' or 'local market')",
           "coordinates": { "lat": number, "lng": number },
           "duration": "string (e.g. '2 hours')",
           "type": "food" | "activity" | "accommodation" | "transport",
@@ -134,7 +144,7 @@ Return this exact JSON structure:
   "tips": ["string", "string", "string"]
 }
 
-Include 3-5 activities per day. Mix food, sightseeing, and experiences. Be specific with real place names.`
+Include 4-6 iconic photo locations in "photoLocations" — these are used to fetch stunning Google Places photos for the trip card slideshow. Include 3-5 activities per day. Mix food, sightseeing, and experiences.`
 
     const raw = await callClaude(prompt, system)
     const itinerary = parseItinerary(raw) as {
@@ -148,11 +158,17 @@ Include 3-5 activities per day. Mix food, sightseeing, and experiences. Be speci
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     const share_slug = generateSlug(itinerary.destination ?? region ?? 'trip', itinerary.totalDays ?? days)
 
+    // Prefer the specific photo locations Claude generated over the raw extracted ones
+    const photoLocs = (itinerary as any).photoLocations as { name: string; lat: number; lng: number }[] | undefined
+    const enrichedLocations = photoLocs?.length
+      ? photoLocs.map((l) => ({ name: l.name, latitude: l.lat, longitude: l.lng }))
+      : locations
+
     const tripData = {
       source_url,
       platform,
       title: itinerary.title,
-      locations,
+      locations: enrichedLocations,
       itinerary,
       share_slug,
       extraction_method,

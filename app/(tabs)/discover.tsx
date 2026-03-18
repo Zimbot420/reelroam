@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   ActivityIndicator,
   FlatList,
@@ -18,18 +19,12 @@ import FeedTripCard, { FeedTripCardSkeleton } from '../../components/FeedTripCar
 import { getPublicFeedTrips } from '../../lib/supabase';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
 import { Trip } from '../../types';
+import { useLanguage } from '../../lib/context/LanguageContext';
 
 // ─── Category detection ───────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  { id: 'all',     label: '✨ All' },
-  { id: 'beach',   label: '🏖️ Beach' },
-  { id: 'city',    label: '🏙️ City' },
-  { id: 'nature',  label: '🏔️ Nature' },
-  { id: 'food',    label: '🍜 Food' },
-  { id: 'culture', label: '🎭 Culture' },
-  { id: 'budget',  label: '💰 Budget' },
-];
+const CATEGORY_IDS = ['all', 'beach', 'city', 'nature', 'food', 'culture', 'budget'] as const;
+type CategoryId = typeof CATEGORY_IDS[number];
 
 function detectCategory(trip: Trip): string {
   const text = `${trip.title ?? ''} ${trip.itinerary?.destination ?? ''} ${trip.locations?.[0]?.name ?? ''}`.toLowerCase();
@@ -51,14 +46,18 @@ const MemoCard = React.memo(function MemoCard({
   trip,
   deviceId,
   cardHeight,
+  isActive,
   onPress,
+  savedKey,
 }: {
   trip: Trip;
   deviceId: string;
   cardHeight: number;
+  isActive: boolean;
   onPress: () => void;
+  savedKey: number;
 }) {
-  return <FeedTripCard trip={trip} deviceId={deviceId} cardHeight={cardHeight} onPress={onPress} />;
+  return <FeedTripCard trip={trip} deviceId={deviceId} cardHeight={cardHeight} isActive={isActive} onPress={onPress} savedKey={savedKey} />;
 });
 
 // ─── Discover screen ──────────────────────────────────────────────────────────
@@ -67,6 +66,7 @@ export default function DiscoverScreen() {
   const router = useRouter();
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
 
   // Card fills screen minus tab bar (base + bottom inset)
   const cardHeight = screenHeight - TAB_BAR_BASE - insets.bottom;
@@ -76,15 +76,29 @@ export default function DiscoverScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [activeCategory, setActiveCategory] = useState<CategoryId>('all');
   const [deviceId, setDeviceId] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [savedKey, setSavedKey] = useState(0);
   const pageRef = useRef(0);
   const fetchedAllRef = useRef(false);
+
+  // Stable refs for FlatList viewability tracking
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) setActiveIndex(viewableItems[0].index ?? 0);
+  }, []);
 
   useEffect(() => {
     getOrCreateDeviceId().then(setDeviceId);
     loadInitial();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setSavedKey((k) => k + 1);
+    }, [])
+  );
 
   async function loadInitial() {
     try {
@@ -149,14 +163,16 @@ export default function DiscoverScreen() {
     return allTrips.filter((t) => detectCategory(t) === activeCategory);
   }, [allTrips, activeCategory]);
 
-  const renderItem = useCallback(({ item }: { item: Trip }) => (
+  const renderItem = useCallback(({ item, index }: { item: Trip; index: number }) => (
     <MemoCard
       trip={item}
       deviceId={deviceId}
       cardHeight={cardHeight}
-      onPress={() => router.push({ pathname: '/trip/[slug]' as any, params: { slug: item.share_slug } })}
+      isActive={index === activeIndex}
+      savedKey={savedKey}
+      onPress={() => { if (item.share_slug) router.push({ pathname: '/trip/[slug]' as any, params: { slug: item.share_slug } }); }}
     />
-  ), [deviceId, cardHeight]);
+  ), [deviceId, cardHeight, activeIndex, savedKey]);
 
   const keyExtractor = useCallback((item: Trip) => item.id, []);
 
@@ -170,22 +186,42 @@ export default function DiscoverScreen() {
     if (loadingMore) {
       return (
         <View style={{ height: cardHeight, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0a0a1a' }}>
-          <ActivityIndicator color="#0D9488" size="large" />
+          <View style={{
+            width: 48, height: 48, borderRadius: 24,
+            backgroundColor: 'rgba(13,148,136,0.15)',
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: 'rgba(13,148,136,0.3)',
+          }}>
+            <ActivityIndicator color="#0D9488" size="small" />
+          </View>
         </View>
       );
     }
     if (!hasMore && filteredTrips.length > 0) {
       return (
-        <View style={{ height: cardHeight, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0a0a1a' }}>
-          <Text style={{ fontSize: 48, marginBottom: 16 }}>🌍</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16, marginBottom: 24 }}>
-            You've seen it all
+        <View style={{ height: cardHeight, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0a0a1a', paddingHorizontal: 40 }}>
+          <Ionicons name="checkmark-circle-outline" size={48} color="rgba(13,148,136,0.5)" style={{ marginBottom: 16 }} />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 20, fontWeight: '700', marginBottom: 8, letterSpacing: -0.3 }}>
+            {t.discover.seenItAll}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 14, textAlign: 'center', marginBottom: 32, lineHeight: 20 }}>
+            {t.discover.adventurePrompt}
           </Text>
           <TouchableOpacity
             onPress={() => router.navigate('/' as any)}
-            style={{ backgroundColor: '#0D9488', borderRadius: 24, paddingHorizontal: 28, paddingVertical: 13 }}
+            activeOpacity={0.85}
           >
-            <Text style={{ color: 'white', fontWeight: '700', fontSize: 15 }}>Generate your own →</Text>
+            <LinearGradient
+              colors={['#0D9488', '#0a7a70']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{
+                borderRadius: 28, paddingHorizontal: 28, paddingVertical: 14,
+                shadowColor: '#0D9488', shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '700', fontSize: 15 }}>{t.discover.generateYourOwn}</Text>
+            </LinearGradient>
           </TouchableOpacity>
         </View>
       );
@@ -197,18 +233,16 @@ export default function DiscoverScreen() {
     <View style={{ height: cardHeight, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, backgroundColor: '#0a0a1a' }}>
       <Text style={{ fontSize: 56, marginBottom: 16 }}>🌍</Text>
       <Text style={{ color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>
-        {activeCategory === 'all' ? 'No trips yet' : `No ${activeCategory} trips`}
+        {activeCategory === 'all' ? t.discover.noTrips : t.discover.noCategoryTrips.replace('{category}', t.discover.categories[activeCategory])}
       </Text>
       <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 }}>
-        {activeCategory === 'all'
-          ? 'Be the first to share a trip to the feed'
-          : 'Try a different category or check back later'}
+        {activeCategory === 'all' ? t.discover.beFirst : t.discover.tryDifferent}
       </Text>
       <TouchableOpacity
         onPress={() => router.navigate('/' as any)}
         style={{ backgroundColor: '#0D9488', borderRadius: 24, paddingHorizontal: 28, paddingVertical: 13 }}
       >
-        <Text style={{ color: 'white', fontWeight: '700', fontSize: 15 }}>Generate a Trip</Text>
+        <Text style={{ color: 'white', fontWeight: '700', fontSize: 15 }}>{t.discover.generateTrip}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -231,11 +265,14 @@ export default function DiscoverScreen() {
           decelerationRate="fast"
           snapToAlignment="start"
           snapToInterval={cardHeight}
+          disableIntervalMomentum
           showsVerticalScrollIndicator={false}
           onEndReached={loadMore}
           onEndReachedThreshold={2}
           onRefresh={handleRefresh}
           refreshing={refreshing}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
           ListFooterComponent={ListFooter}
           ListEmptyComponent={ListEmpty}
           removeClippedSubviews
@@ -272,39 +309,59 @@ export default function DiscoverScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingVertical: 2 }}
         >
-          {CATEGORIES.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setActiveCategory(cat.id);
-              }}
-              style={{
-                paddingHorizontal: 13,
-                paddingVertical: 6,
-                borderRadius: 20,
-                backgroundColor: activeCategory === cat.id
-                  ? '#0D9488'
-                  : 'rgba(0,0,0,0.45)',
-                borderWidth: 1,
-                borderColor: activeCategory === cat.id
-                  ? '#0D9488'
-                  : 'rgba(255,255,255,0.25)',
-              }}
-            >
-              <Text
-                style={{
-                  color: 'white',
-                  fontSize: 12,
-                  fontWeight: activeCategory === cat.id ? '700' : '400',
+          {CATEGORY_IDS.map((catId) => {
+            const isActive = activeCategory === catId;
+            const label = t.discover.categories[catId];
+            return (
+              <TouchableOpacity
+                key={catId}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setActiveCategory(catId);
                 }}
+                activeOpacity={0.75}
               >
-                {cat.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                {isActive ? (
+                  <LinearGradient
+                    colors={['#0D9488', '#0a8f83']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 7,
+                      borderRadius: 20,
+                      shadowColor: '#0D9488',
+                      shadowOpacity: 0.4,
+                      shadowRadius: 8,
+                      shadowOffset: { width: 0, height: 2 },
+                      elevation: 5,
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 }}>
+                      {label}
+                    </Text>
+                  </LinearGradient>
+                ) : (
+                  <View
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 7,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(0,0,0,0.5)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,255,255,0.18)',
+                    }}
+                  >
+                    <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: '400', letterSpacing: 0.2 }}>
+                      {label}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
     </View>

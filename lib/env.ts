@@ -1,10 +1,8 @@
 function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
-    throw new Error(
-      `Missing required environment variable: ${key}\n` +
-      `Make sure it is set in your .env file.`
-    );
+    console.error(`[env] Missing environment variable: ${key}`);
+    return '';
   }
   return value;
 }

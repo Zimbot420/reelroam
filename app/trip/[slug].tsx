@@ -1,23 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Image } from 'expo-image';
 import {
   Alert,
   Animated,
+  Dimensions,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  PanResponder,
   ScrollView,
   Share,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import Reanimated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Callout, Marker } from 'react-native-maps';
-import { supabase, unpublishTrip } from '../../lib/supabase';
+import MapView, { Callout, Marker, Polyline } from 'react-native-maps';
+import {
+  supabase,
+  unpublishTrip,
+  saveTrip as saveTripToList,
+  unsaveTrip as unsaveTripFromList,
+  hasSavedTrip,
+} from '../../lib/supabase';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
+import { cacheTripDetail, getCachedTripDetail } from '../../lib/offlineCache';
+import { checkAndAwardBadges } from '../../lib/badges';
+import { Badge } from '../../types';
 import ShareToFeedModal from '../../components/ShareToFeedModal';
+import BadgeCelebrationModal from '../../components/BadgeCelebrationModal';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ItineraryActivity {
   id: string;
@@ -62,14 +79,82 @@ interface TripRow {
   device_id?: string;
 }
 
-const TYPE_CONFIG = {
-  food:          { emoji: '🍽️', color: '#F97316' },
-  activity:      { emoji: '🎯', color: '#0D9488' },
-  accommodation: { emoji: '🏨', color: '#8B5CF6' },
-  transport:     { emoji: '🚗', color: '#9CA3AF' },
-} as const;
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const TEAL = '#0D9488';
+const SCREEN_HEIGHT   = Dimensions.get('window').height;
+const SNAP_COLLAPSED  = Math.round(SCREEN_HEIGHT * 0.25);
+const SNAP_DEFAULT    = Math.round(SCREEN_HEIGHT * 0.45);
+const SNAP_EXPANDED   = Math.round(SCREEN_HEIGHT * 0.75);
+const SNAP_POINTS     = [SNAP_COLLAPSED, SNAP_DEFAULT, SNAP_EXPANDED];
+
+// Ionicons for activity types — no emoji as structural icons (UI/UX Pro Max rule)
+const TYPE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  food:          'restaurant-outline',
+  activity:      'camera-outline',
+  accommodation: 'business-outline',
+  transport:     'car-outline',
+};
+
+// Per-type accent gradients for icon badge tints and image overlays
+const TYPE_GRADIENTS: Record<string, [string, string]> = {
+  food:          ['#F97316', '#EA580C'],
+  activity:      ['#8B5CF6', '#6D28D9'],
+  accommodation: ['#0D9488', '#0a7a70'],
+  transport:     ['#64748B', '#475569'],
+};
+
+const TRANSPORT_MODES = [
+  { key: 'bus',  icon: 'bus-outline'  as const },
+  { key: 'walk', icon: 'walk-outline' as const },
+  { key: 'car',  icon: 'car-outline'  as const },
+] as const;
+
+type TransportMode = 'bus' | 'walk' | 'car';
+
+// ─── Google Places photo lookup ───────────────────────────────────────────────
+
+const GMAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+const PLACES_BASE = 'https://maps.googleapis.com/maps/api/place';
+// Module-level cache: query string → photo URL (empty string = no photo found)
+const _photoCache = new Map<string, string>();
+
+function usePlacePhoto(name: string, locationName: string, shouldFetch: boolean): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (!shouldFetch || fetchedRef.current || !GMAPS_KEY) return;
+    fetchedRef.current = true;
+
+    const query = [name, locationName].filter(Boolean).join(' ');
+
+    // Serve from cache immediately if we've seen this query before
+    const cached = _photoCache.get(query);
+    if (cached !== undefined) {
+      if (cached) setUrl(cached);
+      return;
+    }
+
+    fetch(`${PLACES_BASE}/textsearch/json?query=${encodeURIComponent(query)}&key=${GMAPS_KEY}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const ref: string | undefined = data.results?.[0]?.photos?.[0]?.photo_reference;
+        const photoUrl = ref
+          ? `${PLACES_BASE}/photo?maxwidth=800&photo_reference=${ref}&key=${GMAPS_KEY}`
+          : '';
+        _photoCache.set(query, photoUrl);
+        if (photoUrl) setUrl(photoUrl);
+      })
+      .catch(() => {
+        _photoCache.set(query, ''); // don't retry failed queries
+      });
+  }, [shouldFetch]);
+
+  return url;
+}
+
+// ─── Skeleton ────────────────────────────────────────────────────────────────
 
 function SkeletonBlock({ w, h }: { w: string; h: number }) {
   const opacity = useRef(new Animated.Value(0.4)).current;
@@ -91,35 +176,49 @@ function SkeletonBlock({ w, h }: { w: string; h: number }) {
 function TripSkeleton() {
   return (
     <View style={{ flex: 1, backgroundColor: 'white' }}>
-      <View style={{ height: 224, backgroundColor: '#E5E7EB' }} />
-      <View style={{ padding: 20 }}>
-        <SkeletonBlock w="75%" h={28} />
-        <SkeletonBlock w="50%" h={16} />
-        <SkeletonBlock w="66%" h={16} />
-        <View style={{ marginTop: 16 }}>
-          <SkeletonBlock w="100%" h={90} />
-          <SkeletonBlock w="100%" h={90} />
-          <SkeletonBlock w="100%" h={90} />
+      <View style={{ height: SNAP_DEFAULT, backgroundColor: '#E5E7EB' }} />
+      <View style={{
+        flex: 1, marginTop: -20, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        backgroundColor: 'white', padding: 20,
+      }}>
+        <SkeletonBlock w="80%" h={30} />
+        <SkeletonBlock w="55%" h={16} />
+        <View style={{ flexDirection: 'row', gap: 8, marginVertical: 16 }}>
+          <SkeletonBlock w="32%" h={34} />
+          <SkeletonBlock w="26%" h={34} />
+          <SkeletonBlock w="30%" h={34} />
         </View>
+        <SkeletonBlock w="100%" h={110} />
+        <SkeletonBlock w="100%" h={88} />
+        <SkeletonBlock w="100%" h={88} />
       </View>
     </View>
   );
 }
 
+// ─── Not Found ────────────────────────────────────────────────────────────────
+
 function NotFoundScreen({ onHome }: { onHome: () => void }) {
   return (
-    <SafeAreaView className="flex-1 bg-white items-center justify-center px-8">
-      <Text className="text-5xl mb-4">🗺️</Text>
-      <Text className="text-xl font-bold text-gray-900 text-center mb-2">Trip not found</Text>
-      <Text className="text-gray-500 text-sm text-center mb-8">
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <Ionicons name="map-outline" size={56} color="#D1D5DB" style={{ marginBottom: 16 }} />
+      <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', textAlign: 'center', marginBottom: 8 }}>
+        Trip not found
+      </Text>
+      <Text style={{ fontSize: 14, color: '#9CA3AF', textAlign: 'center', marginBottom: 32, lineHeight: 21 }}>
         This trip link may have expired or been removed.
       </Text>
-      <TouchableOpacity onPress={onHome} className="px-8 py-3 rounded-2xl" style={{ backgroundColor: TEAL }}>
-        <Text className="text-white font-semibold">Go Home</Text>
+      <TouchableOpacity
+        onPress={onHome}
+        style={{ paddingHorizontal: 32, paddingVertical: 14, borderRadius: 28, backgroundColor: TEAL, minWidth: 44, minHeight: 44, alignItems: 'center' }}
+      >
+        <Text style={{ color: 'white', fontWeight: '600', fontSize: 15 }}>Go Home</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );
 }
+
+// ─── Activity Card ────────────────────────────────────────────────────────────
 
 function ActivityCard({
   activity,
@@ -130,79 +229,311 @@ function ActivityCard({
   isSelected: boolean;
   onPress: () => void;
 }) {
-  const config = TYPE_CONFIG[activity.type] ?? TYPE_CONFIG.activity;
+  const [expanded, setExpanded] = useState(false);
+  const chevronAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim    = useRef(new Animated.Value(0)).current;
+
+  const icon      = TYPE_ICONS[activity.type] ?? 'location-outline';
+  const colors    = TYPE_GRADIENTS[activity.type] ?? TYPE_GRADIENTS.activity;
+  const gradStart = colors[0];
+  // 8-digit hex = colour + 12% opacity tint for the icon badge background
+  const tintBg    = gradStart + '1F';
+  // Real Google Places photo, fetched lazily on first expand; falls back to picsum
+  const realPhotoUrl = usePlacePhoto(activity.name, activity.locationName, expanded);
+  const imageUrl     = realPhotoUrl ?? `https://picsum.photos/seed/${activity.id}/600/250`;
+
+  // Auto-expand card when the matching map pin is tapped
+  useEffect(() => {
+    if (isSelected) {
+      setExpanded(true);
+      fadeAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(chevronAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 12 }),
+        Animated.timing(fadeAnim,    { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [isSelected]);
+
+  function handlePress() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const next = !expanded;
+    if (next) {
+      setExpanded(true);
+      fadeAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(chevronAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 12 }),
+        Animated.timing(fadeAnim,    { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.spring(chevronAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }),
+        Animated.timing(fadeAnim,    { toValue: 0, duration: 160, useNativeDriver: true }),
+      ]).start(() => setExpanded(false));
+    }
+    onPress();
+  }
+
+  const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+
   return (
     <TouchableOpacity
-      onPress={onPress}
-      className="bg-white rounded-2xl p-4 mb-3"
-      style={{ borderWidth: isSelected ? 2 : 1, borderColor: isSelected ? TEAL : '#F3F4F6' }}
+      onPress={handlePress}
+      activeOpacity={0.85}
+      style={{
+        backgroundColor: 'white',
+        borderRadius: 16,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOpacity: isSelected ? 0.14 : 0.07,
+        shadowRadius:  isSelected ? 14   : 6,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: isSelected ? 6 : 2,
+      }}
     >
-      <View className="flex-row items-start gap-3">
-        <View
-          className="w-9 h-9 rounded-xl items-center justify-center flex-shrink-0 mt-0.5"
-          style={{ backgroundColor: config.color + '18' }}
-        >
-          <Text style={{ fontSize: 17 }}>{config.emoji}</Text>
+      {/* Selected accent bar */}
+      {isSelected && (
+        <View style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, zIndex: 1,
+          backgroundColor: TEAL,
+          borderTopLeftRadius: 16, borderBottomLeftRadius: 16,
+        }} />
+      )}
+
+      {/* ── Collapsed header row (always visible) ──────────────────────── */}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+        padding: 14, paddingLeft: isSelected ? 17 : 14,
+      }}>
+        {/* Type-coloured icon badge */}
+        <View style={{
+          width: 38, height: 38, borderRadius: 12,
+          backgroundColor: tintBg,
+          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          <Ionicons name={icon} size={17} color={gradStart} />
         </View>
-        <View className="flex-1">
-          <Text className="font-semibold text-gray-900 text-base leading-snug">{activity.name}</Text>
-          <Text className="text-gray-400 text-xs mt-0.5">{activity.locationName}</Text>
-          <View className="flex-row gap-3 mt-2">
-            {!!activity.duration && <Text className="text-gray-500 text-xs">⏱ {activity.duration}</Text>}
-            {!!activity.estimatedCost && <Text className="text-gray-500 text-xs">💰 {activity.estimatedCost}</Text>}
+
+        {/* Name + meta chips */}
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827', lineHeight: 20 }} numberOfLines={1}>
+            {activity.name}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 3 }}>
+            {!!activity.duration && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Ionicons name="time-outline" size={11} color="#9CA3AF" />
+                <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{activity.duration}</Text>
+              </View>
+            )}
+            {!!activity.estimatedCost && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <Ionicons name="cash-outline" size={11} color="#9CA3AF" />
+                <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{activity.estimatedCost}</Text>
+              </View>
+            )}
+            {!!activity.locationName && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flex: 1, overflow: 'hidden' }}>
+                <Ionicons name="location-outline" size={11} color="#9CA3AF" />
+                <Text style={{ fontSize: 11, color: '#9CA3AF' }} numberOfLines={1}>{activity.locationName}</Text>
+              </View>
+            )}
           </View>
-          {!!activity.description && (
-            <Text className="text-gray-600 text-sm mt-2 leading-relaxed">{activity.description}</Text>
-          )}
-          {!!activity.tips && (
-            <View className="mt-3 px-3 py-2 rounded-xl" style={{ backgroundColor: '#F0FDF4' }}>
-              <Text className="text-green-700 text-xs leading-relaxed">💡 {activity.tips}</Text>
-            </View>
-          )}
         </View>
+
+        {/* Animated expand chevron */}
+        <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+          <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
+        </Animated.View>
       </View>
+
+      {/* ── Expanded panel ─────────────────────────────────────────────── */}
+      {expanded && (
+        <Animated.View style={{ opacity: fadeAnim }}>
+          {/* Photo banner with gradient + overlay labels */}
+          <View style={{ height: 180 }}>
+            <Image
+              source={{ uri: imageUrl }}
+              style={{ width: '100%', height: 180 }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+            />
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.62)']}
+              style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 90 }}
+            />
+            {/* Location name + type pill on photo */}
+            <View style={{
+              position: 'absolute', bottom: 10, left: 12, right: 12,
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+            }}>
+              <Ionicons name="location" size={12} color="rgba(255,255,255,0.9)" />
+              <Text style={{ color: 'white', fontSize: 12, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                {activity.locationName || activity.name}
+              </Text>
+              <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: gradStart }}>
+                <Text style={{ color: 'white', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  {activity.type}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Description + tips */}
+          <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 14, gap: 10 }}>
+            {!!activity.description && (
+              <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>
+                {activity.description}
+              </Text>
+            )}
+            {!!activity.tips && (
+              <View style={{
+                backgroundColor: '#F0FDF9', borderRadius: 12, padding: 12,
+                flexDirection: 'row', gap: 8, alignItems: 'flex-start',
+              }}>
+                <Ionicons name="bulb-outline" size={14} color={TEAL} style={{ marginTop: 1 }} />
+                <Text style={{ flex: 1, fontSize: 12, color: '#374151', lineHeight: 18 }}>{activity.tips}</Text>
+              </View>
+            )}
+          </View>
+        </Animated.View>
+      )}
     </TouchableOpacity>
   );
 }
 
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+
 export default function TripDetailScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [trip, setTrip] = useState<TripRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [activeDay, setActiveDay] = useState(1);
   const [isPublic, setIsPublic] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [deviceId, setDeviceId] = useState('');
+  const [transportMode, setTransportMode] = useState<TransportMode>('bus');
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [celebrationBadge, setCelebrationBadge] = useState<Badge | null>(null);
+  const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const newBadgeQueueRef = useRef<Badge[]>([]);
 
   const mapRef = useRef<MapView>(null);
   const scrollRef = useRef<ScrollView>(null);
   const dayOffsets = useRef<Record<number, number>>({});
+  const sortedDayKeysRef = useRef<number[]>([]);
+
+  // ── Draggable divider ─────────────────────────────────────────────────────
+
+  const mapHeightAnim = useRef(new Animated.Value(SNAP_DEFAULT)).current;
+  const mapHeightRef  = useRef(SNAP_DEFAULT);   // mutable mirror for pan math
+  const refitMap      = useRef<() => void>(() => {});
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder:  () => true,
+
+      onPanResponderGrant: () => {
+        // Capture live value so math starts from where animation is
+        mapHeightAnim.stopAnimation((val) => { mapHeightRef.current = val; });
+      },
+
+      onPanResponderMove: (_, gs) => {
+        // gs.moveY = absolute Y of finger from top of screen = desired map height
+        const next = Math.min(SNAP_EXPANDED, Math.max(SNAP_COLLAPSED, gs.moveY));
+        mapHeightAnim.setValue(next);
+        mapHeightRef.current = next;
+      },
+
+      onPanResponderRelease: () => {
+        const current = mapHeightRef.current;
+        const nearest = SNAP_POINTS.reduce((prev, pt) =>
+          Math.abs(pt - current) < Math.abs(prev - current) ? pt : prev
+        );
+
+        Animated.spring(mapHeightAnim, {
+          toValue: nearest,
+          useNativeDriver: false,
+          tension: 68,
+          friction: 12,
+        }).start();
+        mapHeightRef.current = nearest;
+
+        // Re-fit all pins when snapping to expanded view
+        if (nearest === SNAP_EXPANDED) {
+          setTimeout(() => refitMap.current(), 380);
+        }
+      },
+    })
+  ).current;
+
+  // ── Data loading ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     getOrCreateDeviceId().then(setDeviceId);
+  }, []);
 
-    async function load() {
+  const loadTrip = useCallback(async () => {
+    if (!slug) return;
+
+    try {
       const { data, error } = await supabase
         .from('trips')
         .select('*')
         .eq('share_slug', slug)
         .single();
-      if (error || !data) {
-        setNotFound(true);
-      } else {
+
+      if (data && !error) {
+        // Online — update state and write to cache for future offline use
         setTrip(data as TripRow);
         setIsPublic(data.is_public ?? false);
+        setIsOffline(false);
         supabase.from('trip_views').insert({ trip_id: data.id }).then(() => {});
+        cacheTripDetail(data as Record<string, unknown>); // fire-and-forget
+      } else if (error?.code === 'PGRST116') {
+        // Supabase "no rows" = trip genuinely doesn't exist
+        setNotFound(true);
+      } else {
+        // DB/network error — fall back to cache
+        const cached = await getCachedTripDetail(slug);
+        if (cached) {
+          setTrip(cached as unknown as TripRow);
+          setIsPublic((cached.is_public as boolean) ?? false);
+          setIsOffline(true);
+        } else {
+          setNotFound(true);
+        }
       }
-      setLoading(false);
+    } catch {
+      // Hard network failure (no connection at all)
+      const cached = await getCachedTripDetail(slug);
+      if (cached) {
+        setTrip(cached as unknown as TripRow);
+        setIsPublic((cached.is_public as boolean) ?? false);
+        setIsOffline(true);
+      } else {
+        setNotFound(true);
+      }
     }
-    if (slug) load();
+
+    setLoading(false);
   }, [slug]);
 
+  // Refetch on every focus so edits made in the edit screen appear immediately
+  useFocusEffect(
+    useCallback(() => {
+      loadTrip();
+    }, [loadTrip]),
+  );
+
+  // Focus map on active day's first location
   useEffect(() => {
     if (!trip?.itinerary?.days) return;
     const day = trip.itinerary.days.find((d) => d.day === activeDay);
@@ -217,10 +548,63 @@ export default function TripDetailScreen() {
     }
   }, [activeDay]);
 
+  // Check saved state once both trip id and deviceId are available
+  useEffect(() => {
+    if (!trip?.id || !deviceId) return;
+    hasSavedTrip(trip.id, deviceId).then(setIsSaved);
+  }, [trip?.id, deviceId]);
+
+  // Keep refitMap.current pointing at current trip + mapRef
+  useEffect(() => {
+    refitMap.current = () => {
+      if (!trip?.itinerary?.days || !mapRef.current) return;
+      const coords = trip.itinerary.days
+        .flatMap((d) => d.activities)
+        .filter((a) => a.coordinates?.lat && a.coordinates?.lng)
+        .map((a) => ({ latitude: a.coordinates.lat, longitude: a.coordinates.lng }));
+      if (coords.length > 0) {
+        mapRef.current.fitToCoordinates(coords, {
+          edgePadding: { top: 60, right: 40, bottom: 40, left: 40 },
+          animated: true,
+        });
+      }
+    };
+  }, [trip]);
+
+  // ── Memoized derived data ─────────────────────────────────────────────────
+
+  const itinerary = trip?.itinerary ?? null;
+
+  const markers = useMemo(
+    () =>
+      (itinerary?.days ?? [])
+        .flatMap((d) => d.activities)
+        .filter((a) => a.coordinates?.lat && a.coordinates?.lng),
+    [itinerary],
+  );
+
+  const polylineCoords = useMemo(
+    () => markers.map((a) => ({ latitude: a.coordinates.lat, longitude: a.coordinates.lng })),
+    [markers],
+  );
+
+  const chips = useMemo(
+    () =>
+      [
+        itinerary?.totalEstimatedCost ? `Budget: ${itinerary.totalEstimatedCost}` : null,
+        itinerary?.totalDays          ? `Length: ${itinerary.totalDays} day${itinerary.totalDays !== 1 ? 's' : ''}` : null,
+        itinerary?.destination        ? `Destination: ${itinerary.destination}` : null,
+        itinerary?.bestTimeToVisit    ? `Best time: ${itinerary.bestTimeToVisit}` : null,
+      ].filter((c): c is string => !!c),
+    [itinerary],
+  );
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
   function handleScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
     const y = e.nativeEvent.contentOffset.y;
     const offsets = dayOffsets.current;
-    const days = Object.keys(offsets).map(Number).sort((a, b) => a - b);
+    const days = sortedDayKeysRef.current;
     for (let i = days.length - 1; i >= 0; i--) {
       if (y >= offsets[days[i]] - 80) {
         if (activeDay !== days[i]) setActiveDay(days[i]);
@@ -241,19 +625,49 @@ export default function TripDetailScreen() {
     }
   }
 
+  async function handleToggleSave() {
+    if (!trip || !deviceId || isSaving) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const newState = !isSaved;
+    setIsSaved(newState); // optimistic update
+    setIsSaving(true);
+    try {
+      if (newState) {
+        await saveTripToList(trip.id, deviceId);
+      } else {
+        await unsaveTripFromList(trip.id, deviceId);
+      }
+    } catch {
+      setIsSaved(!newState); // revert on error
+      Alert.alert('Error', 'Could not update your bucket list. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleShare() {
     if (!trip) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+    const webUrl   = `${SUPABASE_URL}/functions/v1/trip-page?slug=${slug}`;
+    const appUrl   = `scrollaway://trip/${slug}`;
+    const tripTitle = trip.itinerary?.title ?? trip.title ?? 'A travel itinerary';
+    const dest      = trip.itinerary?.destination ? ` to ${trip.itinerary.destination}` : '';
+
     try {
       await Share.share({
-        message: `Check out this trip I planned with ReelRoam!\n\n${trip.itinerary?.title ?? trip.title}\n\nreelroam://trip/${slug}`,
-        title: trip.itinerary?.title ?? trip.title,
+        // `url` is iOS-only (shows as a rich link preview in iMessage etc.)
+        // `message` is the fallback for Android and plain-text shares.
+        url: webUrl,
+        message: `Check out this trip${dest} I built with ScrollAway!\n\n${tripTitle}\n\n${webUrl}`,
+        title: tripTitle,
       });
     } catch { /* dismissed */ }
   }
 
   function handlePublicBadgePress() {
-    if (!trip) return;
+    if (!trip || !isPublic) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Alert.alert(
       'Remove from Feed?',
@@ -285,208 +699,495 @@ export default function TripDetailScreen() {
       .map((a) => ({ latitude: a.coordinates.lat, longitude: a.coordinates.lng }));
     if (coords.length > 0) {
       mapRef.current.fitToCoordinates(coords, {
-        edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
+        edgePadding: { top: 60, right: 40, bottom: 40, left: 40 },
         animated: true,
       });
     }
   }
 
+  // ── Early returns ─────────────────────────────────────────────────────────
+
   if (loading) return <TripSkeleton />;
   if (notFound) return <NotFoundScreen onHome={() => router.replace('/')} />;
   if (!trip) return null;
 
-  const itinerary = trip.itinerary;
-  const markers = itinerary?.days
-    ?.flatMap((d) => d.activities)
-    .filter((a) => a.coordinates?.lat && a.coordinates?.lng) ?? [];
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <View className="flex-1 bg-white">
+    <View style={{ flex: 1, backgroundColor: '#E5E7EB' }}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={{ height: 224, width: '100%' }}>
-        <MapView ref={mapRef} style={{ flex: 1 }} onMapReady={onMapReady}>
-          {markers.map((activity) => {
-            const config = TYPE_CONFIG[activity.type] ?? TYPE_CONFIG.activity;
-            return (
-              <Marker
-                key={activity.id}
-                coordinate={{ latitude: activity.coordinates.lat, longitude: activity.coordinates.lng }}
-                onPress={() => handlePinPress(activity)}
-              >
-                <View style={{
-                  width: 36, height: 36, borderRadius: 18, backgroundColor: config.color,
-                  borderWidth: 2, borderColor: 'white', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Text style={{ fontSize: 14 }}>{config.emoji}</Text>
-                </View>
-                <Callout>
-                  <View style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
-                    <Text style={{ fontWeight: '600', fontSize: 12, color: '#111827' }}>{activity.name}</Text>
-                    <Text style={{ fontSize: 11, color: '#6B7280' }}>{activity.locationName}</Text>
-                  </View>
-                </Callout>
-              </Marker>
-            );
-          })}
-        </MapView>
-      </View>
-
-      <TouchableOpacity
-        onPress={() => router.back()}
-        style={{
-          position: 'absolute', top: 48, left: 16, width: 36, height: 36,
-          borderRadius: 18, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center',
-          shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
-        }}
-      >
-        <Ionicons name="arrow-back" size={18} color="#111827" />
-      </TouchableOpacity>
-
-      <View className="bg-white px-5 pt-4 pb-3 border-b border-gray-100">
-        <View className="flex-row items-start justify-between">
-          <View className="flex-1 pr-3">
-            <Text className="text-xl font-bold text-gray-900 leading-snug" numberOfLines={2}>
-              {itinerary?.title ?? trip.title}
-            </Text>
-            <Text className="text-gray-500 text-sm mt-0.5">{itinerary?.destination}</Text>
-          </View>
-          <View className="items-end gap-1">
-            <View className="flex-row items-center gap-1 px-2 py-1 rounded-full" style={{ backgroundColor: '#F0FDFA' }}>
-              <Ionicons name="calendar-outline" size={12} color={TEAL} />
-              <Text className="text-xs font-medium" style={{ color: TEAL }}>{itinerary?.totalDays ?? 0} days</Text>
-            </View>
-            {trip.is_pro && (
-              <View className="px-2 py-1 rounded-full" style={{ backgroundColor: '#FEF3C7' }}>
-                <Text className="text-xs font-semibold text-amber-700">✦ Pro</Text>
-              </View>
-            )}
-            {isPublic && (
-              <TouchableOpacity
-                onPress={handlePublicBadgePress}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, backgroundColor: '#F0FDF4' }}
-              >
-                <Ionicons name="earth" size={11} color="#16a34a" />
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#16a34a' }}>Public</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-        {!!itinerary?.totalEstimatedCost && (
-          <Text className="text-gray-400 text-xs mt-1">Est. cost: {itinerary.totalEstimatedCost}</Text>
-        )}
-      </View>
-
-      <ScrollView
-        ref={scrollRef}
-        className="flex-1"
-        onScroll={handleScroll}
-        scrollEventThrottle={100}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 120 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {(itinerary?.tips?.length ?? 0) > 0 && (
-          <View className="mb-5 px-4 py-3 rounded-2xl" style={{ backgroundColor: '#F0FDF4' }}>
-            <Text className="text-green-800 font-semibold text-sm mb-1">Travel Tips</Text>
-            {itinerary.tips.map((tip, i) => (
-              <Text key={i} className="text-green-700 text-xs leading-relaxed">• {tip}</Text>
-            ))}
-          </View>
-        )}
-
-        {itinerary?.days?.map((day) => (
-          <View key={day.day} onLayout={(e) => { dayOffsets.current[day.day] = e.nativeEvent.layout.y; }}>
-            <View className="flex-row items-center gap-3 mb-3">
-              <View
-                className="w-8 h-8 rounded-full items-center justify-center"
-                style={{ backgroundColor: activeDay === day.day ? TEAL : '#F3F4F6' }}
-              >
-                <Text className="text-xs font-bold" style={{ color: activeDay === day.day ? 'white' : '#6B7280' }}>
-                  {day.day}
-                </Text>
-              </View>
-              <Text className="font-semibold text-gray-900 text-base">{day.label}</Text>
-            </View>
-
-            {day.activities.map((activity) => (
-              <ActivityCard
-                key={activity.id}
-                activity={activity}
-                isSelected={selectedActivityId === activity.id}
-                onPress={() => {
-                  setSelectedActivityId(activity.id);
-                  if (activity.coordinates?.lat && mapRef.current) {
-                    mapRef.current.animateToRegion({
-                      latitude: activity.coordinates.lat,
-                      longitude: activity.coordinates.lng,
-                      latitudeDelta: 0.02,
-                      longitudeDelta: 0.02,
-                    }, 500);
-                  }
-                }}
-              />
-            ))}
-            <View style={{ height: 8 }} />
-          </View>
-        ))}
-
-        {!!itinerary?.bestTimeToVisit && (
-          <View className="mt-2 mb-4 px-4 py-3 rounded-2xl bg-gray-50">
-            <Text className="text-gray-500 text-xs">
-              <Text className="font-semibold text-gray-700">Best time to visit: </Text>
-              {itinerary.bestTimeToVisit}
-            </Text>
-          </View>
-        )}
-      </ScrollView>
-
-      <View
-        className="absolute bottom-0 left-0 right-0 flex-row gap-3 px-5 pb-8 pt-4 bg-white border-t border-gray-100"
-        style={{ shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 6 }}
-      >
-        <TouchableOpacity
-          onPress={handleShare}
-          className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl border border-gray-200"
+      {/* ── Map ────────────────────────────────────────────────────────────── */}
+      <Animated.View style={{ height: mapHeightAnim }}>
+        <MapView
+          ref={mapRef}
+          style={{ flex: 1 }}
+          onMapReady={onMapReady}
         >
-          <Ionicons name="share-outline" size={18} color={TEAL} />
-          <Text className="font-semibold text-gray-800">Share</Text>
+          {/* Polyline route */}
+          {polylineCoords.length > 1 && (
+            <Polyline
+              coordinates={polylineCoords}
+              strokeColor={TEAL}
+              strokeWidth={3}
+            />
+          )}
+
+          {/* Numbered pins */}
+          {markers.map((activity, index) => (
+            <Marker
+              key={activity.id}
+              coordinate={{ latitude: activity.coordinates.lat, longitude: activity.coordinates.lng }}
+              onPress={() => handlePinPress(activity)}
+            >
+              <View style={{
+                width: 32, height: 32, borderRadius: 16, backgroundColor: TEAL,
+                borderWidth: 2.5, borderColor: 'white',
+                alignItems: 'center', justifyContent: 'center',
+                shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 4, elevation: 5,
+              }}>
+                <Text style={{ color: 'white', fontWeight: '700', fontSize: 12 }}>{index + 1}</Text>
+              </View>
+              <Callout>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 6, minWidth: 120 }}>
+                  <Text style={{ fontWeight: '600', fontSize: 13, color: '#111827' }}>{activity.name}</Text>
+                  <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{activity.locationName}</Text>
+                </View>
+              </Callout>
+            </Marker>
+          ))}
+        </MapView>
+
+        {/* Back button — top left, safe area aware */}
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={{
+            position: 'absolute', top: insets.top + 8, left: 16,
+            width: 40, height: 40, borderRadius: 20,
+            backgroundColor: 'white', alignItems: 'center', justifyContent: 'center',
+            shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 }, elevation: 4,
+          }}
+        >
+          <Ionicons name="chevron-back" size={22} color="#111827" />
         </TouchableOpacity>
 
-        {/* Share to Feed */}
+        {/* Transport mode toggles — top right */}
+        <View style={{
+          position: 'absolute', top: insets.top + 8, right: 16,
+          flexDirection: 'row', gap: 8,
+        }}>
+          {TRANSPORT_MODES.map(({ key, icon }) => (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setTransportMode(key)}
+              style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: transportMode === key ? TEAL : 'white',
+                alignItems: 'center', justifyContent: 'center',
+                shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6,
+                shadowOffset: { width: 0, height: 2 }, elevation: 4,
+              }}
+            >
+              <Ionicons name={icon} size={18} color={transportMode === key ? 'white' : '#374151'} />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Animated.View>
+
+      {/* ── Draggable handle bar ───────────────────────────────────────────── */}
+      <View
+        {...panResponder.panHandlers}
+        style={{
+          height: 28,
+          backgroundColor: 'white',
+          borderTopLeftRadius: 22, borderTopRightRadius: 22,
+          alignItems: 'center', justifyContent: 'center',
+          shadowColor: '#000',
+          shadowOpacity: 0.08,
+          shadowRadius: 6,
+          shadowOffset: { width: 0, height: -4 },
+          elevation: 6,
+          zIndex: 10,
+        }}
+      >
+        <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: '#CCCCCC' }} />
+      </View>
+
+      {/* ── Content card ──────────────────────────────────────────────────── */}
+      <Reanimated.View entering={FadeInUp.delay(60).springify().damping(22)} style={{ flex: 1, backgroundColor: 'white', overflow: 'hidden' }}>
+        {/* Offline banner */}
+        {isOffline && (
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 16, paddingVertical: 8,
+            backgroundColor: '#FFF7ED',
+            borderBottomWidth: 1, borderBottomColor: '#FED7AA',
+          }}>
+            <Ionicons name="cloud-offline-outline" size={15} color="#C2410C" />
+            <Text style={{ fontSize: 12, color: '#C2410C', fontWeight: '500', flex: 1 }}>
+              You're offline — showing your last saved version
+            </Text>
+          </View>
+        )}
+
+        {/* Trip header */}
+        <Reanimated.View entering={FadeInDown.delay(160).duration(380)} style={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+            {/* Shared element: morphs from the feed card title */}
+            <Reanimated.Text
+              sharedTransitionTag={`trip-title-${slug}`}
+              numberOfLines={2}
+              style={{ flex: 1, fontSize: 22, fontWeight: '800', color: '#111827', lineHeight: 30 }}
+            >
+              {itinerary?.title ?? trip.title}
+            </Reanimated.Text>
+            {/* Edit button — owner only */}
+            {trip.device_id === deviceId && (
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({
+                    pathname: '/trip/edit',
+                    params: { tripId: trip.id, slug: trip.share_slug },
+                  })
+                }
+                style={{
+                  width: 44, height: 44, borderRadius: 22,
+                  backgroundColor: '#F0FDF9',
+                  alignItems: 'center', justifyContent: 'center',
+                  borderWidth: 1, borderColor: '#99E6DC',
+                }}
+              >
+                <Ionicons name="create-outline" size={20} color={TEAL} />
+              </TouchableOpacity>
+            )}
+
+            {/* Bucket list bookmark */}
+            <TouchableOpacity
+              onPress={handleToggleSave}
+              style={{
+                width: 44, height: 44, borderRadius: 22,
+                backgroundColor: isSaved ? '#F0FDF9' : '#F9FAFB',
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 1, borderColor: isSaved ? '#99E6DC' : '#F3F4F6',
+              }}
+            >
+              <Ionicons
+                name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                size={20}
+                color={isSaved ? TEAL : '#9CA3AF'}
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Metadata row */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+            {!!itinerary?.destination && (
+              <>
+                <Ionicons name="location-outline" size={13} color="#9CA3AF" />
+                <Text style={{ fontSize: 13, color: '#9CA3AF', marginLeft: 3 }}>{itinerary.destination}</Text>
+                <Text style={{ fontSize: 13, color: '#D1D5DB', marginHorizontal: 6 }}>•</Text>
+              </>
+            )}
+            {!!itinerary?.totalDays && (
+              <>
+                <Ionicons name="calendar-outline" size={13} color="#9CA3AF" />
+                <Text style={{ fontSize: 13, color: '#9CA3AF', marginLeft: 3 }}>
+                  {itinerary.totalDays} day{itinerary.totalDays !== 1 ? 's' : ''}
+                </Text>
+                <Text style={{ fontSize: 13, color: '#D1D5DB', marginHorizontal: 6 }}>•</Text>
+              </>
+            )}
+            <TouchableOpacity
+              onPress={handlePublicBadgePress}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 3, minHeight: 24 }}
+            >
+              <Ionicons name="earth-outline" size={13} color="#9CA3AF" />
+              <Text style={{ fontSize: 13, color: '#9CA3AF', marginLeft: 3 }}>
+                {isPublic ? 'Public trip' : 'Private trip'}
+              </Text>
+            </TouchableOpacity>
+
+            {trip.is_pro && (
+              <>
+                <Text style={{ fontSize: 13, color: '#D1D5DB', marginHorizontal: 6 }}>•</Text>
+                <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, backgroundColor: '#FEF3C7' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#B45309' }}>Pro</Text>
+                </View>
+              </>
+            )}
+          </View>
+        </Reanimated.View>
+
+        {/* Scrollable content */}
+        <ScrollView
+          ref={scrollRef}
+          onScroll={handleScroll}
+          scrollEventThrottle={100}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 160 }}
+        >
+          {/* ── Info chips ─────────────────────────────────────────────────── */}
+          {chips.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8, paddingBottom: 2 }}
+              style={{ marginBottom: 20 }}
+            >
+              {chips.map((chip, i) => (
+                <View key={i} style={{
+                  paddingHorizontal: 14, paddingVertical: 9,
+                  borderRadius: 20, backgroundColor: '#F0F0F0',
+                }}>
+                  <Text style={{ fontSize: 13, color: '#333333', fontWeight: '500' }}>{chip}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {/* ── Travel Tips ────────────────────────────────────────────────── */}
+          {(itinerary?.tips?.length ?? 0) > 0 && (
+            <View style={{ marginBottom: 24, borderRadius: 16, padding: 1.5, overflow: 'hidden' }}>
+              {/* Gradient border underlay */}
+              <LinearGradient
+                colors={[TEAL, '#0a8f83', 'rgba(13,148,136,0.3)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16 }}
+              />
+              <View style={{ padding: 16, borderRadius: 15, backgroundColor: '#EFF9F8' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 12 }}>
+                  <Ionicons name="bulb-outline" size={15} color={TEAL} />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#0D4E4A', letterSpacing: 0.1 }}>
+                    Travel Tips
+                  </Text>
+                </View>
+                {itinerary.tips.map((tip, i) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <View style={{
+                      width: 5, height: 5, borderRadius: 2.5, backgroundColor: TEAL,
+                      marginTop: 7.5, marginRight: 10, flexShrink: 0,
+                    }} />
+                    <Text style={{ flex: 1, fontSize: 13, color: '#374151', lineHeight: 20 }}>{tip}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* ── Day-by-day itinerary ────────────────────────────────────────── */}
+          {itinerary?.days?.map((day) => (
+            <View
+              key={day.day}
+              style={{ marginBottom: 28 }}
+              onLayout={(e) => {
+                dayOffsets.current[day.day] = e.nativeEvent.layout.y;
+                sortedDayKeysRef.current = Object.keys(dayOffsets.current).map(Number).sort((a, b) => a - b);
+              }}
+            >
+              {/* Day header — editorial style with watermark number */}
+              <View style={{ marginBottom: 16, overflow: 'hidden' }}>
+                {/* Watermark number — large faded behind the label */}
+                <Text style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: -14,
+                  fontSize: 80,
+                  fontWeight: '900',
+                  color: '#F3F4F6',
+                  letterSpacing: -4,
+                  lineHeight: 80,
+                  opacity: 0.9,
+                }}>
+                  {day.day}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{
+                    width: 3, height: 32, borderRadius: 2, backgroundColor: TEAL,
+                    marginRight: 12,
+                    shadowColor: TEAL, shadowOpacity: 0.5, shadowRadius: 4, elevation: 2,
+                  }} />
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: TEAL, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 1 }}>
+                      Day {day.day}
+                    </Text>
+                    <Text style={{ fontSize: 17, fontWeight: '800', color: '#111827', letterSpacing: -0.3 }}>
+                      {day.label}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Activities with vertical timeline */}
+              {day.activities.map((activity, actIndex) => (
+                <View key={activity.id} style={{ flexDirection: 'row', marginBottom: 12 }}>
+                  {/* Timeline column */}
+                  <View style={{ width: 24, alignItems: 'center' }}>
+                    {/* Line above dot (hidden on first item) */}
+                    <View style={{
+                      width: 2, height: 14,
+                      backgroundColor: actIndex === 0 ? 'transparent' : '#E0E0E0',
+                    }} />
+                    {/* Hollow dot */}
+                    <View style={{
+                      width: 10, height: 10, borderRadius: 5,
+                      borderWidth: 2, borderColor: TEAL, backgroundColor: 'white',
+                    }} />
+                    {/* Line below dot (hidden on last item) */}
+                    <View style={{
+                      flex: 1, width: 2,
+                      backgroundColor: actIndex < day.activities.length - 1 ? '#E0E0E0' : 'transparent',
+                    }} />
+                  </View>
+
+                  {/* Activity card */}
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <ActivityCard
+                      activity={activity}
+                      isSelected={selectedActivityId === activity.id}
+                      onPress={() => {
+                        setSelectedActivityId(activity.id);
+                        if (activity.coordinates?.lat && mapRef.current) {
+                          mapRef.current.animateToRegion({
+                            latitude: activity.coordinates.lat,
+                            longitude: activity.coordinates.lng,
+                            latitudeDelta: 0.02,
+                            longitudeDelta: 0.02,
+                          }, 500);
+                        }
+                      }}
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
+          ))}
+
+          {/* Best time to visit note */}
+          {!!itinerary?.bestTimeToVisit && (
+            <View style={{ marginBottom: 16, padding: 14, borderRadius: 12, backgroundColor: '#F9FAFB' }}>
+              <Text style={{ fontSize: 13, color: '#6B7280', lineHeight: 20 }}>
+                <Text style={{ fontWeight: '600', color: '#374151' }}>Best time to visit: </Text>
+                {itinerary.bestTimeToVisit}
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      </Reanimated.View>
+
+      {/* ── Sticky bottom CTA ─────────────────────────────────────────────── */}
+      <View style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        backgroundColor: 'white',
+        paddingHorizontal: 20, paddingTop: 16,
+        paddingBottom: Math.max(insets.bottom, 16) + 8,
+        borderTopWidth: 1, borderTopColor: '#F3F4F6',
+        shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8,
+        shadowOffset: { width: 0, height: -2 }, elevation: 8,
+      }}>
+        {/* Primary: Start Trip — gradient + glow */}
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            router.replace('/');
+          }}
+          activeOpacity={0.88}
+        >
+          <LinearGradient
+            colors={['#0D9488', '#0a7a70']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{
+              height: 56, borderRadius: 28,
+              alignItems: 'center', justifyContent: 'center',
+              shadowColor: TEAL, shadowOpacity: 0.55, shadowRadius: 16,
+              shadowOffset: { width: 0, height: 6 }, elevation: 8,
+            }}
+          >
+            {/* Inner top highlight */}
+            <View style={{
+              position: 'absolute', top: 0, left: 20, right: 20, height: 1,
+              backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1,
+            }} />
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', letterSpacing: 0.2 }}>Start Trip</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Secondary row: Share + Bucket List */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 24, paddingVertical: 4 }}>
+          <TouchableOpacity onPress={handleShare} style={{ paddingVertical: 10, minHeight: 44, justifyContent: 'center' }}>
+            <Text style={{ fontSize: 14, color: TEAL, textDecorationLine: 'underline', fontWeight: '500' }}>
+              Share Trip
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleToggleSave}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, minHeight: 44 }}
+          >
+            <Ionicons
+              name={isSaved ? 'bookmark' : 'bookmark-outline'}
+              size={16}
+              color={isSaved ? TEAL : '#9CA3AF'}
+            />
+            <Text style={{ fontSize: 14, color: isSaved ? TEAL : '#9CA3AF', fontWeight: '500' }}>
+              {isSaved ? 'Saved' : 'Bucket List'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Share to Feed (only when private) */}
         {!isPublic && (
           <TouchableOpacity
             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowShareModal(true); }}
-            className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl border"
-            style={{ borderColor: TEAL, backgroundColor: 'rgba(13,148,136,0.06)' }}
+            style={{ alignItems: 'center', paddingBottom: 4, minHeight: 44, justifyContent: 'center' }}
           >
-            <Ionicons name="earth-outline" size={18} color={TEAL} />
-            <Text style={{ fontWeight: '600', color: TEAL, fontSize: 14 }}>To Feed</Text>
+            <Text style={{ fontSize: 13, color: '#9CA3AF' }}>Share to Discovery Feed</Text>
           </TouchableOpacity>
         )}
-
-        <TouchableOpacity
-          onPress={() => router.replace('/')}
-          className="flex-1 flex-row items-center justify-center gap-2 h-12 rounded-2xl"
-          style={{ backgroundColor: TEAL }}
-        >
-          <Ionicons name="add-outline" size={18} color="white" />
-          <Text className="text-white font-semibold">New Trip</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* Share to Feed modal */}
+      {/* ShareToFeedModal */}
       {trip && (
         <ShareToFeedModal
           tripId={trip.id}
           deviceId={deviceId}
           visible={showShareModal}
           onClose={() => setShowShareModal(false)}
-          onShared={(uname, emoji) => {
+          onShared={() => {
             setIsPublic(true);
             setShowShareModal(false);
+            // Award badges for sharing
+            if (deviceId) {
+              checkAndAwardBadges(deviceId, { trigger: 'trip_shared' })
+                .then((newBadges) => {
+                  if (newBadges.length > 0) {
+                    newBadgeQueueRef.current = newBadges;
+                    setCelebrationBadge(newBadges[0]);
+                    setCelebrationVisible(true);
+                  }
+                })
+                .catch(() => {});
+            }
           }}
         />
       )}
+
+      {/* Badge celebration — shown after sharing to feed */}
+      <BadgeCelebrationModal
+        badge={celebrationBadge}
+        visible={celebrationVisible}
+        onDismiss={() => {
+          setCelebrationVisible(false);
+          const queue = newBadgeQueueRef.current;
+          const nextIdx = queue.indexOf(celebrationBadge!) + 1;
+          if (nextIdx < queue.length) {
+            setCelebrationBadge(queue[nextIdx]);
+            setCelebrationVisible(true);
+          }
+        }}
+      />
     </View>
   );
 }

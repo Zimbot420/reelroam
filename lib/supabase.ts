@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { Platform } from 'react-native';
+import { notifyTripOwner } from './notifications';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -12,6 +17,71 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+export async function signUpWithEmail(email: string, password: string) {
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+export async function signInWithEmail(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+export async function signInWithApple() {
+  if (Platform.OS !== 'ios') throw new Error('Apple Sign In is only available on iOS');
+  const credential = await AppleAuthentication.signInAsync({
+    requestedScopes: [
+      AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+      AppleAuthentication.AppleAuthenticationScope.EMAIL,
+    ],
+  });
+  if (!credential.identityToken) throw new Error('No identity token from Apple');
+  const { data, error } = await supabase.auth.signInWithIdToken({
+    provider: 'apple',
+    token: credential.identityToken,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function signInWithGoogle() {
+  const redirectTo = AuthSession.makeRedirectUri({ scheme: 'scrollaway' });
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo, skipBrowserRedirect: true },
+  });
+  if (error || !data.url) throw error ?? new Error('No OAuth URL');
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+  if (result.type !== 'success') return null;
+
+  const url = new URL(result.url);
+  const code = url.searchParams.get('code');
+  if (!code) throw new Error('No code in redirect URL');
+
+  const { data: session, error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
+  if (sessionError) throw sessionError;
+  return session;
+}
+
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+export async function getCurrentUser() {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+export function onAuthStateChange(callback: Parameters<typeof supabase.auth.onAuthStateChange>[0]) {
+  return supabase.auth.onAuthStateChange(callback);
+}
 
 // ─── Discovery feed ───────────────────────────────────────────────────────────
 
@@ -32,6 +102,8 @@ export async function likeTrip(tripId: string, deviceId: string) {
     .insert({ trip_id: tripId, device_id: deviceId });
   if (error) throw error;
   await supabase.rpc('increment_like_count', { trip_id_arg: tripId }).throwOnError();
+  // Notify trip owner (fire-and-forget; no-ops if owner has no account)
+  notifyTripOwner(tripId, 'trip_liked', 'Someone liked your trip!', 'Your trip is getting love.', { trip_id: tripId }).catch(() => {});
 }
 
 export async function unlikeTrip(tripId: string, deviceId: string) {
@@ -62,6 +134,8 @@ export async function saveTrip(tripId: string, deviceId: string) {
     .insert({ trip_id: tripId, device_id: deviceId });
   if (error) throw error;
   await supabase.rpc('increment_save_count', { trip_id_arg: tripId });
+  // Notify trip owner (fire-and-forget; no-ops if owner has no account)
+  notifyTripOwner(tripId, 'trip_saved', 'Someone saved your trip!', 'Your trip was added to their bucket list.', { trip_id: tripId }).catch(() => {});
 }
 
 export async function unsaveTrip(tripId: string, deviceId: string) {
@@ -119,6 +193,45 @@ export async function upsertProfile(deviceId: string, username: string, avatarEm
       { onConflict: 'device_id' },
     );
   if (error) throw error;
+}
+
+// ─── Past trips ───────────────────────────────────────────────────────────────
+
+export async function getPastTrips(deviceId: string, userId?: string) {
+  const { data, error } = await supabase.rpc('get_past_trips', {
+    p_device_id: deviceId,
+    p_user_id: userId ?? null,
+  });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function deletePastTrip(tripId: string) {
+  const { error } = await supabase.from('trips').delete().eq('id', tripId);
+  if (error) throw error;
+}
+
+export async function sharePastTrip(tripId: string, username: string | null, avatarEmoji: string) {
+  const { error } = await supabase.from('trips').update({
+    is_public: true,
+    username,
+    user_avatar_emoji: avatarEmoji,
+  }).eq('id', tripId);
+  if (error) throw error;
+}
+
+// ─── Bucket list ──────────────────────────────────────────────────────────────
+
+// ─── My trips (device-owned) ──────────────────────────────────────────────────
+
+export async function getUserTrips(deviceId: string) {
+  const { data, error } = await supabase
+    .from('trips')
+    .select('id, title, itinerary, locations, created_at')
+    .eq('device_id', deviceId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
 }
 
 // ─── Bucket list ──────────────────────────────────────────────────────────────

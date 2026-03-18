@@ -12,7 +12,7 @@ import {
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -90,8 +90,12 @@ function BucketlistCard({ trip, onPress }: { trip: SavedTrip; onPress: () => voi
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.85}
-      style={{ width: CARD_WIDTH, height: CARD_HEIGHT, borderRadius: 16, overflow: 'hidden' }}
+      activeOpacity={0.82}
+      style={{
+        width: CARD_WIDTH, height: CARD_HEIGHT, borderRadius: 16, overflow: 'hidden',
+        shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 }, elevation: 6,
+      }}
     >
       {imageUrl ? (
         <ExpoImage
@@ -156,20 +160,29 @@ export default function BucketListScreen() {
   const [sortBy, setSortBy] = useState<SortOption>('Recently Saved');
   const mapRef = useRef<MapView>(null);
   const mapReadyRef = useRef(false);
+  const hasLoadedOnce = useRef(false);
 
+  // Load sort preference once on mount
   useEffect(() => {
     AsyncStorage.getItem(SORT_KEY).then((v) => {
       if (v) setSortBy(v as SortOption);
     });
-    getOrCreateDeviceId().then((id) => {
-      setDeviceId(id);
-      loadTrips(id);
-    });
   }, []);
 
-  async function loadTrips(id: string) {
+  // Refetch every time this tab comes into focus so saves made elsewhere appear immediately
+  useFocusEffect(
+    useCallback(() => {
+      getOrCreateDeviceId().then((id) => {
+        setDeviceId(id);
+        loadTrips(id, !hasLoadedOnce.current);
+        hasLoadedOnce.current = true;
+      });
+    }, [])
+  );
+
+  async function loadTrips(id: string, showSkeleton = false) {
     try {
-      setLoading(true);
+      if (showSkeleton) setLoading(true);
       const data = await getSavedTrips(id) as SavedTrip[];
       setTrips(data);
     } catch (e) {
@@ -242,7 +255,7 @@ export default function BucketListScreen() {
     <View style={{ marginLeft: index % 2 === 0 ? 16 : 4, marginRight: index % 2 === 0 ? 4 : 16, marginBottom: 8 }}>
       <BucketlistCard
         trip={item}
-        onPress={() => router.push({ pathname: '/trip/[slug]' as any, params: { slug: item.share_slug } })}
+        onPress={() => { if (item.share_slug) router.push({ pathname: '/trip/[slug]' as any, params: { slug: item.share_slug } }); }}
       />
     </View>
   ), []);
@@ -290,10 +303,15 @@ export default function BucketListScreen() {
           </Text>
           <TouchableOpacity
             onPress={openSortPicker}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 5,
+              backgroundColor: 'rgba(13,148,136,0.1)',
+              borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+              borderWidth: 1, borderColor: 'rgba(13,148,136,0.25)',
+            }}
           >
-            <Ionicons name="swap-vertical-outline" size={13} color="rgba(255,255,255,0.6)" />
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>{sortBy}</Text>
+            <Ionicons name="swap-vertical-outline" size={12} color="rgba(13,148,136,0.85)" />
+            <Text style={{ color: 'rgba(13,148,136,0.85)', fontSize: 12, fontWeight: '500' }}>{sortBy}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -322,19 +340,18 @@ export default function BucketListScreen() {
     <View style={{ flex: 1, backgroundColor: '#0a0a1a' }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: 'white', fontSize: 28, fontWeight: '700' }}>
-              🔖 Bucket List
+        <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12 }}>
+          <Text style={{ color: 'white', fontSize: 32, fontWeight: '800', letterSpacing: -0.8 }}>
+            Bucket List
+          </Text>
+          <View style={{ width: 32, height: 2, borderRadius: 1, backgroundColor: '#0D9488', marginTop: 6, opacity: 0.8 }} />
+          {!loading && (
+            <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 13, marginTop: 6, fontWeight: '300' }}>
+              {trips.length === 0
+                ? 'No trips saved yet'
+                : `${trips.length} ${trips.length === 1 ? 'destination' : 'destinations'} saved`}
             </Text>
-            {!loading && (
-              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 2 }}>
-                {trips.length === 0
-                  ? 'No trips saved yet'
-                  : `${trips.length} ${trips.length === 1 ? 'trip' : 'trips'} saved`}
-              </Text>
-            )}
-          </View>
+          )}
         </View>
 
         {loading ? (
@@ -359,6 +376,10 @@ export default function BucketListScreen() {
             ListEmptyComponent={ListEmpty}
             contentContainerStyle={{ paddingBottom: 32 }}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews
+            maxToRenderPerBatch={6}
+            windowSize={5}
+            initialNumToRender={6}
           />
         )}
       </SafeAreaView>

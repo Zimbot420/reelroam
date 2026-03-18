@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { getProStatus } from '../lib/purchases'
 
+// ─── Test phase flag ──────────────────────────────────────────────────────────
+// Set to false when monetisation goes live.
+const TEST_PHASE_ALL_FREE = true
+
 export const FREE_TRIP_LIMIT = 3
 
 const KEYS = {
@@ -27,6 +31,10 @@ export interface ProStatus extends ProStatusData {
 }
 
 export async function getProStatusAsync(): Promise<ProStatusData> {
+  if (TEST_PHASE_ALL_FREE) {
+    return { isPro: true, tripsThisMonth: 0, tripsRemaining: FREE_TRIP_LIMIT }
+  }
+
   const [isProRaw, countRaw, storedKey] = await Promise.all([
     AsyncStorage.getItem(KEYS.isPro),
     AsyncStorage.getItem(KEYS.tripsCount),
@@ -67,13 +75,15 @@ export async function incrementTripCount(): Promise<void> {
 
 export function useProStatus(): ProStatus {
   const [data, setData] = useState<ProStatusData>({
-    isPro: false,
+    isPro: TEST_PHASE_ALL_FREE,
     tripsThisMonth: 0,
     tripsRemaining: FREE_TRIP_LIMIT,
   })
-  const [isLoaded, setIsLoaded] = useState(false)
+  const [isLoaded, setIsLoaded] = useState(TEST_PHASE_ALL_FREE)
 
   useEffect(() => {
+    if (TEST_PHASE_ALL_FREE) return   // skip RevenueCat entirely during test phase
+
     async function load() {
       // Load from AsyncStorage first for instant display
       const local = await getProStatusAsync()

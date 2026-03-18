@@ -12,6 +12,9 @@ import { generateItinerary } from '../lib/api/itinerary';
 import { fetchPlaceImages, SlideImage } from '../lib/api/fetchPlaceImages';
 import { getOrCreateDeviceId } from '../lib/deviceId';
 import { getProStatusAsync, incrementTripCount } from '../hooks/useProStatus';
+import { checkAndAwardBadges } from '../lib/badges';
+import { Badge } from '../types';
+import BadgeCelebrationModal from '../components/BadgeCelebrationModal';
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -69,6 +72,11 @@ export default function ProcessingScreen() {
 
   // Completion
   const [showReady, setShowReady] = useState(false);
+
+  // Badge celebration
+  const [celebrationBadge, setCelebrationBadge] = useState<Badge | null>(null);
+  const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const newBadgeQueueRef = useRef<Badge[]>([]);
 
   // ── Animated values ──────────────────────────────────────────────────
   const progressAnim    = useRef(new Animated.Value(0)).current;
@@ -302,6 +310,17 @@ export default function ProcessingScreen() {
           // Wait for itinerary, then arm the "ready" flag
           const { slug } = await itineraryPromise;
           await incrementTripCount();
+          // Check + award badges in background (don't block navigation)
+          checkAndAwardBadges(device_id, {
+            trigger: 'trip_generated',
+            destination: extraction.region,
+          }).then((newBadges) => {
+            if (newBadges.length > 0) {
+              newBadgeQueueRef.current = newBadges;
+              setCelebrationBadge(newBadges[0]);
+              setCelebrationVisible(true);
+            }
+          }).catch(() => {});
           Animated.timing(progressAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
           pendingSlugRef.current = slug;
           itineraryReadyRef.current = true;
@@ -312,6 +331,17 @@ export default function ProcessingScreen() {
           const { slug } = await itineraryPromise;
           advanceTo(4);
           await incrementTripCount();
+          // Check + award badges in background
+          checkAndAwardBadges(device_id, {
+            trigger: 'trip_generated',
+            destination: extraction.region,
+          }).then((newBadges) => {
+            if (newBadges.length > 0) {
+              newBadgeQueueRef.current = newBadges;
+              setCelebrationBadge(newBadges[0]);
+              setCelebrationVisible(true);
+            }
+          }).catch(() => {});
           pendingSlugRef.current = slug;
           setShowReady(true);
         }
@@ -524,6 +554,22 @@ export default function ProcessingScreen() {
           </View>
         )}
       </View>
+
+      {/* Badge celebration — shown after trip is generated */}
+      <BadgeCelebrationModal
+        badge={celebrationBadge}
+        visible={celebrationVisible}
+        onDismiss={() => {
+          setCelebrationVisible(false);
+          // Show next badge in queue if any
+          const queue = newBadgeQueueRef.current;
+          const nextIdx = queue.indexOf(celebrationBadge!) + 1;
+          if (nextIdx < queue.length) {
+            setCelebrationBadge(queue[nextIdx]);
+            setCelebrationVisible(true);
+          }
+        }}
+      />
     </Animated.View>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Image,
@@ -7,16 +7,19 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Trip } from '../types';
 import {
   likeTrip, unlikeTrip, hasLikedTrip,
   saveTrip, unsaveTrip, hasSavedTrip,
 } from '../lib/supabase';
+import { useLanguage } from '../lib/context/LanguageContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -80,6 +83,10 @@ export function FeedTripCardSkeleton({ height }: { height: number }) {
 
 // ─── Photo fetching ───────────────────────────────────────────────────────────
 
+// Module-level cache: trip.id → resolved photo URLs
+// Persists across card mount/unmount cycles so re-scrolling is instant
+const _feedPhotoCache = new Map<string, string[]>();
+
 async function fetchLocationPhotos(locationName: string, apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(
@@ -101,21 +108,24 @@ async function fetchTripPhotos(trip: Trip): Promise<string[]> {
   const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!apiKey) return [];
 
-  // Destination first for the hero shot, then individual locations for variety
-  const names: string[] = [];
   const destination = trip.itinerary?.destination ?? trip.title ?? '';
-  if (destination) names.push(destination);
-  (trip.locations ?? []).slice(0, 4).forEach((loc) => {
-    if (loc.name && !names.includes(loc.name)) names.push(loc.name);
-  });
+  const locationNames = (trip.locations ?? [])
+    .slice(0, 4)
+    .map((l) => l.name)
+    .filter(Boolean) as string[];
 
-  const all: string[] = [];
-  for (const name of names) {
-    if (all.length >= 12) break;
-    const photos = await fetchLocationPhotos(name, apiKey);
-    all.push(...photos);
-  }
-  return all.slice(0, 12);
+  const names = destination ? [destination, ...locationNames] : locationNames;
+  if (names.length === 0) return [];
+
+  // Fetch all names in parallel — reduces wait from Σ(each) to max(each)
+  const results = await Promise.all(names.map((n) => fetchLocationPhotos(n, apiKey)));
+
+  // Destination hero shot leads; remaining location photos follow
+  const destPhotos = results[0] ?? [];
+  const locPhotos  = results.slice(1).flat();
+  return ([destPhotos[0], ...locPhotos, ...destPhotos.slice(1)] as string[])
+    .filter(Boolean)
+    .slice(0, 12);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -126,10 +136,13 @@ interface FeedTripCardProps {
   cardHeight: number;
   isActive: boolean;
   onPress: () => void;
+  savedKey?: number;
 }
 
-export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onPress }: FeedTripCardProps) {
+export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onPress, savedKey }: FeedTripCardProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { t } = useLanguage();
   const itinerary = trip.itinerary;
   const destination = itinerary?.destination ?? trip.title ?? 'Unknown destination';
   const totalDays = itinerary?.totalDays ?? 0;
@@ -142,27 +155,31 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
   const [saved, setSaved] = useState(false);
   const [likeCount, setLikeCount] = useState(trip.like_count ?? 0);
   const [saveCount, setSaveCount] = useState(trip.save_count ?? 0);
-
-  const fadeAnim = useRef(new Animated.Value(1)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const iconAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    fetchTripPhotos(trip).then(setPhotos);
+    const cached = _feedPhotoCache.get(trip.id);
+    if (cached) { setPhotos(cached); return; }
+    fetchTripPhotos(trip).then((urls) => {
+      _feedPhotoCache.set(trip.id, urls);
+      setPhotos(urls);
+    });
+  }, [trip.id]);
+
+  useEffect(() => {
+    if (!deviceId) return;
     hasLikedTrip(trip.id, deviceId).then(setLiked);
     hasSavedTrip(trip.id, deviceId).then(setSaved);
-  }, [trip.id]);
+  }, [trip.id, deviceId, savedKey]);
 
   // Auto-playing slideshow — only runs when this card is visible on screen
   useEffect(() => {
     if (!isActive || paused || photos.length <= 1) return;
     const interval = setInterval(() => {
-      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
-        setCurrentIndex((prev) => (prev + 1) % photos.length);
-        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-      });
-    }, 1800);
+      setCurrentIndex((prev) => (prev + 1) % photos.length);
+    }, 3000);
     return () => clearInterval(interval);
   }, [isActive, paused, photos.length]);
 
@@ -170,7 +187,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
   useEffect(() => {
     if (photos.length <= 1) return;
     const next = (currentIndex + 1) % photos.length;
-    Image.prefetch(photos[next]).catch(() => {});
+    if (photos[next]) Image.prefetch(photos[next]).catch(() => {});
   }, [currentIndex, photos]);
 
   function flashIcon(type: 'pause' | 'play') {
@@ -231,11 +248,13 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
     } catch { /* dismissed */ }
   }
 
-  const activityTypes = new Set(
-    itinerary?.days?.flatMap((d) => d.activities.map((a) => a.type)) ?? [],
-  );
-  const presentPills = TYPE_PILLS.filter((p) => activityTypes.has(p.type as any));
-  const gradientColors = getRegionGradient(destination);
+  const presentPills = useMemo(() => {
+    const activityTypes = new Set(
+      itinerary?.days?.flatMap((d) => d.activities.map((a) => a.type)) ?? [],
+    );
+    return TYPE_PILLS.filter((p) => activityTypes.has(p.type as any));
+  }, [trip.id]);
+  const gradientColors = useMemo(() => getRegionGradient(destination), [destination]);
   const currentPhoto = photos[currentIndex] ?? null;
 
   // Right-side action buttons sit 100px from the bottom of the card
@@ -249,20 +268,19 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       />
 
-      {/* ── Animated photo layer — tappable to pause/resume ── */}
+      {/* ── Photo layer — tappable to pause/resume ── */}
       <TouchableOpacity
         activeOpacity={1}
         onPress={handlePhotoTap}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       >
         {currentPhoto && (
-          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-            <ExpoImage
-              source={{ uri: currentPhoto }}
-              contentFit="cover"
-              style={{ width: '100%', height: '100%' }}
-            />
-          </Animated.View>
+          <ExpoImage
+            source={{ uri: currentPhoto }}
+            contentFit="cover"
+            transition={{ duration: 600, effect: 'cross-dissolve' }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          />
         )}
       </TouchableOpacity>
 
@@ -278,91 +296,69 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
         </Animated.View>
       )}
 
-      {/* ── Dark vignette overlay — stronger at bottom ── */}
+      {/* ── Cinematic vignette — transparent top 40%, deep black bottom ── */}
       <LinearGradient
-        colors={['rgba(0,0,0,0.15)', 'transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.95)']}
-        locations={[0, 0.25, 0.6, 1]}
+        colors={['transparent', 'transparent', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.82)', 'rgba(0,0,0,0.97)']}
+        locations={[0, 0.38, 0.58, 0.78, 1]}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       />
+      {/* Subtle top fade for status bar legibility */}
+      <LinearGradient
+        colors={['rgba(0,0,0,0.3)', 'transparent']}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
+      />
 
-      {/* ── Top row: username + day count ── */}
+      {/* Top area intentionally clear — content lives in bottom section */}
+
+      {/* ── Right-side action column — frosted glass pill container ── */}
       <View
         style={{
           position: 'absolute',
-          top: insets.top + 56,
-          left: 16,
-          right: 16,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <View
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: 'white' }}>
-            {trip.user_avatar_emoji ?? '🌍'}  {trip.username ?? 'traveler'}
-          </Text>
-        </View>
-        <View
-          style={{
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: 'white', fontWeight: '600' }}>
-            {totalDays > 0 ? `${totalDays} days` : ''}
-          </Text>
-        </View>
-      </View>
-
-      {/* ── Right-side action column (TikTok style) ── */}
-      <View
-        style={{
-          position: 'absolute',
-          right: 14,
+          right: 12,
           bottom: actionsBottom,
           alignItems: 'center',
-          gap: 22,
+          backgroundColor: 'rgba(0,0,0,0.38)',
+          borderRadius: 28,
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.1)',
+          paddingVertical: 14,
+          paddingHorizontal: 10,
+          gap: 20,
         }}
       >
         {/* Like */}
-        <TouchableOpacity onPress={handleLike} style={{ alignItems: 'center', gap: 5 }}>
+        <TouchableOpacity onPress={handleLike} style={{ alignItems: 'center', gap: 4 }}>
           <Animated.View style={{ transform: [{ scale: heartScale }] }}>
             <Ionicons
               name={liked ? 'heart' : 'heart-outline'}
-              size={34}
-              color={liked ? '#ef4444' : 'white'}
+              size={28}
+              color={liked ? '#ef4444' : 'rgba(255,255,255,0.9)'}
             />
           </Animated.View>
-          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
             {likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}k` : likeCount}
           </Text>
         </TouchableOpacity>
 
         {/* Save */}
-        <TouchableOpacity onPress={handleSave} style={{ alignItems: 'center', gap: 5 }}>
+        <TouchableOpacity onPress={handleSave} style={{ alignItems: 'center', gap: 4 }}>
           <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
             <Ionicons
               name={saved ? 'bookmark' : 'bookmark-outline'}
-              size={32}
-              color={saved ? TEAL : 'white'}
+              size={26}
+              color={saved ? TEAL : 'rgba(255,255,255,0.9)'}
             />
           </Animated.View>
-          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
             {saveCount >= 1000 ? `${(saveCount / 1000).toFixed(1)}k` : saveCount}
           </Text>
         </TouchableOpacity>
 
         {/* Share */}
-        <TouchableOpacity onPress={handleShare} style={{ alignItems: 'center', gap: 5 }}>
-          <Ionicons name="paper-plane-outline" size={30} color="white" />
-          <Text style={{ color: 'white', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.8)', textShadowRadius: 4 }}>
-            Share
+        <TouchableOpacity onPress={handleShare} style={{ alignItems: 'center', gap: 4 }}>
+          <Ionicons name="paper-plane-outline" size={24} color="rgba(255,255,255,0.9)" />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
+            {t.feedCard.share}
           </Text>
         </TouchableOpacity>
       </View>
@@ -370,72 +366,105 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
       {/* ── Bottom-left content (leaves room for right column) ── */}
       <TouchableOpacity
         onPress={onPress}
-        activeOpacity={0.95}
+        activeOpacity={0.92}
         style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
-          right: 76,
-          paddingHorizontal: 16,
-          paddingBottom: 28,
+          right: 80,
+          paddingHorizontal: 20,
+          paddingBottom: 32,
         }}
       >
-        {/* Trip title */}
-        <Text
+        {/* Username row */}
+        {trip.username && (
+          <TouchableOpacity
+            onPress={() => {
+              if (trip.username) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push(('/profile/' + trip.username) as any);
+              }
+            }}
+            activeOpacity={trip.username ? 0.7 : 1}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              marginBottom: 10, alignSelf: 'flex-start',
+            }}
+          >
+            <Text style={{ fontSize: 20, lineHeight: 24 }}>{trip.user_avatar_emoji ?? '🌍'}</Text>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: '400', letterSpacing: 0.2 }}>
+              @{trip.username}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Trip title — large and commanding; shared element to trip detail */}
+        <Reanimated.Text
           numberOfLines={2}
+          sharedTransitionTag={`trip-title-${trip.share_slug}`}
           style={{
             color: 'white',
-            fontSize: 26,
+            fontSize: 28,
             fontWeight: '800',
-            lineHeight: 32,
+            lineHeight: 34,
             marginBottom: 6,
-            textShadowColor: 'rgba(0,0,0,0.5)',
-            textShadowRadius: 8,
+            letterSpacing: -0.5,
           }}
         >
           {itinerary?.title ?? trip.title}
-        </Text>
+        </Reanimated.Text>
 
-        {/* Destination */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 }}>
-          <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.8)" />
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>
+        {/* Destination — thin weight for contrast */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 14 }}>
+          <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.55)" />
+          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, fontWeight: '300', letterSpacing: 0.3 }}>
             {destination}
+            {totalDays > 0 ? `  ·  ${totalDays} ${t.feedCard.days}` : ''}
           </Text>
         </View>
 
         {/* Activity type pills */}
         {presentPills.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
             {presentPills.map((pill) => (
               <View
                 key={pill.type}
                 style={{
                   flexDirection: 'row', alignItems: 'center', gap: 4,
-                  backgroundColor: 'rgba(255,255,255,0.15)',
-                  borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  paddingHorizontal: 8, paddingVertical: 4,
                 }}
               >
-                <Text style={{ fontSize: 11 }}>{pill.emoji}</Text>
-                <Text style={{ color: 'white', fontSize: 11 }}>{pill.label}</Text>
+                <Text style={{ fontSize: 10 }}>{pill.emoji}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '500' }}>{pill.label}</Text>
               </View>
             ))}
           </View>
         )}
 
-        {/* View Trip button */}
-        <View
+        {/* View Trip button — gradient fill */}
+        <LinearGradient
+          colors={['#0D9488', '#0a7a70']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
           style={{
             alignSelf: 'flex-start',
-            flexDirection: 'row', alignItems: 'center', gap: 5,
-            backgroundColor: TEAL,
+            flexDirection: 'row', alignItems: 'center',
             borderRadius: 22,
-            paddingHorizontal: 16, paddingVertical: 9,
+            paddingHorizontal: 18, paddingVertical: 10,
+            shadowColor: '#0D9488',
+            shadowOpacity: 0.5,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 6,
           }}
         >
-          <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>View Trip</Text>
-          <Ionicons name="arrow-forward" size={14} color="white" />
-        </View>
+          <Text style={{ color: 'white', fontWeight: '700', fontSize: 14, marginRight: 5 }}>{t.feedCard.viewTrip}</Text>
+          <Ionicons name="arrow-forward" size={13} color="white" />
+        </LinearGradient>
       </TouchableOpacity>
     </View>
   );

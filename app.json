@@ -4,6 +4,15 @@
     "slug": "reelroam",
     "scheme": "scrollaway",
     "version": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/2716a19d-fb0f-4b7b-a300-69c99b9fbf61",
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -27,7 +36,8 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "ScrollAway uses your location to show nearby places on your trip map.",
         "NSCameraUsageDescription": "ScrollAway uses your camera to let you add photos to your trips.",
-        "NSPhotoLibraryUsageDescription": "ScrollAway accesses your photos to let you add images to your trips."
+        "NSPhotoLibraryUsageDescription": "ScrollAway accesses your photos to let you add images to your trips.",
+        "NSUserNotificationsUsageDescription": "ScrollAway sends you notifications when people save your trips and when you earn new badges."
       }
     },
     "android": {
@@ -49,29 +59,40 @@
           "action": "android.intent.action.SEND",
           "autoVerify": true,
           "data": [
-            {
-              "scheme": "https",
-              "host": "*.tiktok.com"
-            },
-            {
-              "scheme": "https",
-              "host": "*.instagram.com"
-            },
-            {
-              "scheme": "https",
-              "host": "*.youtube.com"
-            },
-            {
-              "scheme": "https",
-              "host": "youtu.be"
-            },
-            {
-              "scheme": "https",
-              "host": "vm.tiktok.com"
-            }
+            { "scheme": "https", "host": "*.tiktok.com" },
+            { "scheme": "https", "host": "*.instagram.com" },
+            { "scheme": "https", "host": "*.youtube.com" },
+            { "scheme": "https", "host": "youtu.be" },
+            { "scheme": "https", "host": "vm.tiktok.com" }
           ],
           "category": [
             "android.intent.category.DEFAULT"
+          ]
+        },
+        {
+          "action": "android.intent.action.VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "scrollaway" }
+          ],
+          "category": [
+            "android.intent.category.DEFAULT",
+            "android.intent.category.BROWSABLE"
+          ]
+        },
+        {
+          "action": "android.intent.action.VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "gxtukagbyjvxkuanqoxx.supabase.co",
+              "pathPrefix": "/functions/v1/trip-page"
+            }
+          ],
+          "category": [
+            "android.intent.category.DEFAULT",
+            "android.intent.category.BROWSABLE"
           ]
         }
       ]
@@ -81,6 +102,15 @@
     },
     "plugins": [
       "expo-router",
+      "expo-updates",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0D9488",
+          "sounds": []
+        }
+      ],
       "./plugins/withPodsSwiftConcurrencyFix",
       [
         "expo-share-intent",
@@ -107,13 +137,15 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},
       "eas": {
         "projectId": "2716a19d-fb0f-4b7b-a300-69c99b9fbf61"
-      }
+      },
+      "googleIosClientId": "723696004677-i1cv9gtfohrr0g0bvjcoamcug8doftfs.apps.googleusercontent.com"
     },
     "owner": "zimbot420"
   }

@@ -25,7 +25,16 @@ export async function extractLocations(
     body: { url, platform, method, device_id },
   })
 
-  if (error) throw new Error(error.message ?? 'Extraction failed')
+  if (error) {
+    // FunctionsHttpError has a `context` Response — read the actual body for the real error message
+    try {
+      const body = await (error as any).context?.json?.()
+      if (body?.error) throw new Error(body.error)
+    } catch (inner) {
+      if (inner instanceof Error && inner.message !== error.message) throw inner
+    }
+    throw new Error(error.message ?? 'Extraction failed')
+  }
   if (data?.error === 'RATE_LIMIT_EXCEEDED') throw new Error('RATE_LIMIT_EXCEEDED')
   if (data?.error) throw new Error(data.error)
 
