@@ -130,10 +130,14 @@
         "expo-build-properties",
         {
           "ios": {
+            "newArchEnabled": false,
             "deploymentTarget": "15.1",
             "xcconfig": {
               "SWIFT_STRICT_CONCURRENCY": "minimal"
             }
+          },
+          "android": {
+            "newArchEnabled": false
           }
         }
       ],
