@@ -1,6 +1,7 @@
 import '../global.css';
 
-import * as Sentry from '@sentry/react-native';
+// Sentry temporarily disabled (native module excluded) to isolate a startup crash.
+// import * as Sentry from '@sentry/react-native';
 import { useEffect, Component } from 'react';
 import { ToastAndroid, Platform, Alert, View, Text, ScrollView } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -12,17 +13,10 @@ import { AuthProvider, useAuth } from '../lib/context/AuthContext';
 import { LanguageProvider } from '../lib/context/LanguageContext';
 import AppTabBar from '../components/AppTabBar';
 
-Sentry.init({
-  dsn: 'https://8934484315746b2c1af4a321d40d971b@o4511066059177984.ingest.de.sentry.io/4511066064814160',
-  enableNative: true,
-  sendDefaultPii: false,
-  tracesSampleRate: 0.2,
-});
-
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error) { Sentry.captureException(error); }
+  componentDidCatch(error: Error) { console.error('ErrorBoundary caught:', error); }
   render() {
     if (this.state.error) {
       const err = this.state.error as Error;

@@ -10,5 +10,14 @@ module.exports = {
         android: null,
       },
     },
+    // Temporarily exclude Sentry native code to isolate a
+    // dispatch_once crash (nil object in NSDictionary during
+    // native module init). JS Sentry calls become no-ops.
+    '@sentry/react-native': {
+      platforms: {
+        ios: null,
+        android: null,
+      },
+    },
   },
 };
