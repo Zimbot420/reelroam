@@ -276,6 +276,210 @@ export async function getFollowingUsernames(deviceId: string): Promise<string[]>
   return (data ?? []).map((r: any) => r.following_username);
 }
 
+// ─── Messages ─────────────────────────────────────────────────────────────────
+
+export interface ConversationPreview {
+  id: string;
+  friend_username: string;
+  friend_avatar_emoji: string | null;
+  last_message: string | null;
+  last_trip_slug: string | null;
+  last_message_at: string;
+  unread_count: number;
+}
+
+export interface Message {
+  id: string;
+  created_at: string;
+  conversation_id: string;
+  sender_username: string;
+  content: string | null;
+  trip_slug: string | null;
+  is_read: boolean;
+}
+
+export async function getMutualFollows(deviceId: string, myUsername: string): Promise<{ username: string; avatar_emoji: string | null }[]> {
+  // Get who I follow
+  const following = await getFollowingUsernames(deviceId);
+  if (following.length === 0) return [];
+
+  // Check which of them follow me back
+  const { data } = await supabase
+    .from('follows')
+    .select('follower_device_id, following_username')
+    .eq('following_username', myUsername)
+    .in('follower_device_id', following.map(() => '*')); // can't use this directly
+
+  // Alternative: query all followers of me, intersect with my following list
+  const { data: myFollowers } = await supabase
+    .from('follows')
+    .select('following_username')
+    .eq('following_username', myUsername);
+
+  // Get device_ids of people who follow me — need to map to usernames
+  // Simpler approach: for each person I follow, check if they follow me
+  const { data: followersOfMe } = await supabase
+    .from('follows')
+    .select('follower_device_id')
+    .eq('following_username', myUsername);
+
+  const followerDeviceIds = new Set((followersOfMe ?? []).map((r: any) => r.follower_device_id));
+
+  // Map following usernames to their device_ids via profiles
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('username, device_id, avatar_emoji')
+    .in('username', following);
+
+  const mutuals: { username: string; avatar_emoji: string | null }[] = [];
+  for (const p of (profiles ?? [])) {
+    if (followerDeviceIds.has(p.device_id)) {
+      mutuals.push({ username: p.username, avatar_emoji: p.avatar_emoji });
+    }
+  }
+  return mutuals;
+}
+
+export async function getOrCreateConversation(usernameA: string, usernameB: string): Promise<string> {
+  const [user_a, user_b] = [usernameA, usernameB].sort();
+
+  // Try to find existing
+  const { data: existing } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('user_a', user_a)
+    .eq('user_b', user_b)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  // Create new
+  const { data: created, error } = await supabase
+    .from('conversations')
+    .insert({ user_a, user_b })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return created.id;
+}
+
+export async function getConversations(username: string): Promise<ConversationPreview[]> {
+  // Get all conversations where this user is participant
+  const { data: convos } = await supabase
+    .from('conversations')
+    .select('*')
+    .or(`user_a.eq.${username},user_b.eq.${username}`)
+    .order('updated_at', { ascending: false });
+
+  if (!convos || convos.length === 0) return [];
+
+  const previews: ConversationPreview[] = [];
+  for (const c of convos) {
+    const friendUsername = c.user_a === username ? c.user_b : c.user_a;
+
+    // Get last message
+    const { data: lastMsg } = await supabase
+      .from('messages')
+      .select('content, trip_slug, created_at')
+      .eq('conversation_id', c.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Skip conversations with no messages
+    if (!lastMsg) continue;
+
+    // Get unread count
+    const { count: unread } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('conversation_id', c.id)
+      .neq('sender_username', username)
+      .eq('is_read', false);
+
+    // Get friend's avatar
+    const { data: friendProfile } = await supabase
+      .from('profiles')
+      .select('avatar_emoji')
+      .eq('username', friendUsername)
+      .maybeSingle();
+
+    previews.push({
+      id: c.id,
+      friend_username: friendUsername,
+      friend_avatar_emoji: friendProfile?.avatar_emoji ?? null,
+      last_message: lastMsg.content,
+      last_trip_slug: lastMsg.trip_slug,
+      last_message_at: lastMsg.created_at,
+      unread_count: unread ?? 0,
+    });
+  }
+  return previews;
+}
+
+export async function getMessages(conversationId: string, limit = 50): Promise<Message[]> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as Message[];
+}
+
+export async function sendMessage(
+  conversationId: string,
+  senderUsername: string,
+  content?: string,
+  tripSlug?: string,
+): Promise<Message> {
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      sender_username: senderUsername,
+      content: content?.trim() || null,
+      trip_slug: tripSlug || null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+
+  // Update conversation timestamp
+  await supabase.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversationId).then(() => {}).catch(() => {});
+
+  return data as Message;
+}
+
+export async function markConversationRead(conversationId: string, myUsername: string) {
+  await supabase
+    .from('messages')
+    .update({ is_read: true })
+    .eq('conversation_id', conversationId)
+    .neq('sender_username', myUsername)
+    .eq('is_read', false);
+}
+
+export async function getUnreadMessageCount(username: string): Promise<number> {
+  // Get all conversation IDs for this user
+  const { data: convos } = await supabase
+    .from('conversations')
+    .select('id')
+    .or(`user_a.eq.${username},user_b.eq.${username}`);
+
+  if (!convos || convos.length === 0) return 0;
+
+  const { count } = await supabase
+    .from('messages')
+    .select('*', { count: 'exact', head: true })
+    .in('conversation_id', convos.map((c: any) => c.id))
+    .neq('sender_username', username)
+    .eq('is_read', false);
+
+  return count ?? 0;
+}
+
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 export interface SearchResult {

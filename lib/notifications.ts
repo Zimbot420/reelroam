@@ -162,6 +162,7 @@ export type NotificationType =
   | 'trip_liked'
   | 'comment_added'
   | 'user_followed'
+  | 'new_message'
   | 'milestone'
   | 'weekly_recap';
 

@@ -46,6 +46,7 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string; bg: string }> =
   trip_liked:   { icon: 'heart',            color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
   comment_added:{ icon: 'chatbubble',       color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
   user_followed:{ icon: 'person-add',       color: '#0D9488', bg: 'rgba(13,148,136,0.15)' },
+  new_message:  { icon: 'chatbubble',       color: '#3B82F6', bg: 'rgba(59,130,246,0.15)' },
   milestone:    { icon: 'star',             color: TEAL,      bg: 'rgba(13,148,136,0.15)' },
   weekly_recap: { icon: 'calendar-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)' },
 };
@@ -262,6 +263,10 @@ export default function NotificationsScreen() {
         break;
       case 'user_followed':
         if (d.username) router.push(`/profile/${d.username}` as any);
+        break;
+      case 'new_message':
+        if (d.conversation_id) router.push({ pathname: '/messages/[conversationId]', params: { conversationId: d.conversation_id, friendUsername: d.username ?? '' } } as any);
+        else router.push('/messages' as any);
         break;
       case 'badge_earned':
         if (d.username) router.push(`/profile/${d.username}` as any);

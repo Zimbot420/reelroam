@@ -19,6 +19,7 @@ import SpinningGlobe from '../../components/SpinningGlobe';
 import { FREE_TRIP_LIMIT, useProStatus } from '../../hooks/useProStatus';
 import { useAuth } from '../../lib/context/AuthContext';
 import { useUnreadNotifications } from '../../hooks/useUnreadNotifications';
+import { getUnreadMessageCount } from '../../lib/supabase';
 import { useLanguage } from '../../lib/context/LanguageContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -92,12 +93,17 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { isPro, tripsRemaining, isLoaded } = useProStatus();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, username: authUsername } = useAuth();
   const { t, interpolate } = useLanguage();
   const [inputUrl, setInputUrl] = useState('');
   const detectedPlatform = detectPlatform(inputUrl);
   const btnOpacity = useRef(new Animated.Value(1)).current;
   const { count: unreadCount } = useUnreadNotifications();
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
+  useEffect(() => {
+    if (authUsername) getUnreadMessageCount(authUsername).then(setUnreadMessages).catch(() => {});
+  }, [authUsername]);
 
   // No transform styles allowed — reanimated 4.1.6 Fabric bug causes SIGABRT
   function pressIn() {
@@ -138,6 +144,26 @@ export default function HomeScreen() {
         >
           <Ionicons name="search-outline" size={22} color="rgba(255,255,255,0.7)" />
         </TouchableOpacity>
+      {isAuthenticated && authUsername && (
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/messages' as any);
+          }}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="chatbubble-outline" size={20} color="rgba(255,255,255,0.7)" />
+          {unreadMessages > 0 && (
+            <View style={{ position: 'absolute', top: 4, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: '#0D9488' }} />
+          )}
+        </TouchableOpacity>
+      )}
       {isAuthenticated && (
         <TouchableOpacity
           onPress={() => {
