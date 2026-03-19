@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -343,6 +344,48 @@ export default function TripEditScreen() {
   const [moveModalVisible, setMoveModalVisible] = useState(false);
   const [moveActivityData, setMoveActivityData] = useState<{ dayNum: number; activityId: string } | null>(null);
 
+  // AI suggest state
+  const [suggestingForDay, setSuggestingForDay] = useState<number | null>(null);
+  const [suggestType, setSuggestType] = useState<ActivityType>('activity');
+  const [showSuggestPicker, setShowSuggestPicker] = useState(false);
+  const [suggestPickerDay, setSuggestPickerDay] = useState<number>(0);
+
+  // Dirty state tracking for unsaved changes warning
+  const isDirty = useRef(false);
+  const hasSaved = useRef(false);
+
+  function markDirty() {
+    isDirty.current = true;
+  }
+
+  function confirmDiscard(onDiscard: () => void) {
+    if (!isDirty.current || hasSaved.current) {
+      onDiscard();
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Discard changes?',
+      'You have unsaved edits. Are you sure you want to go back?',
+      [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: onDiscard },
+      ],
+    );
+  }
+
+  // Intercept Android hardware back button
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isDirty.current && !hasSaved.current) {
+        confirmDiscard(() => router.back());
+        return true; // prevent default
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, []);
+
   // Load itinerary on mount
   useEffect(() => {
     async function load() {
@@ -370,10 +413,12 @@ export default function TripEditScreen() {
   // ── Day operations ─────────────────────────────────────────────────────────
 
   function updateDayLabel(dayNum: number, label: string) {
+    markDirty();
     setDays((prev) => prev.map((d) => (d.day === dayNum ? { ...d, label } : d)));
   }
 
   function addDay() {
+    markDirty();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const nextNum = days.length > 0 ? Math.max(...days.map((d) => d.day)) + 1 : 1;
     setDays((prev) => [
@@ -416,6 +461,7 @@ export default function TripEditScreen() {
   // ── Activity operations ────────────────────────────────────────────────────
 
   function updateActivity(dayNum: number, id: string, field: keyof Activity, value: string | ActivityType) {
+    markDirty();
     setDays((prev) =>
       prev.map((d) =>
         d.day !== dayNum
@@ -426,6 +472,7 @@ export default function TripEditScreen() {
   }
 
   function deleteActivity(dayNum: number, id: string) {
+    markDirty();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert('Remove activity?', 'This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
@@ -445,6 +492,7 @@ export default function TripEditScreen() {
   }
 
   function moveActivity(dayNum: number, id: string, dir: 'up' | 'down') {
+    markDirty();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setDays((prev) =>
       prev.map((d) => {
@@ -460,6 +508,7 @@ export default function TripEditScreen() {
   }
 
   function moveActivityToDay(fromDay: number, activityId: string, toDay: number) {
+    markDirty();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setDays((prev) => {
       let movedActivity: Activity | null = null;
@@ -486,6 +535,7 @@ export default function TripEditScreen() {
   }
 
   function addActivity(dayNum: number) {
+    markDirty();
     const id = newActivityId();
     const blank: Activity = {
       id,
@@ -502,6 +552,76 @@ export default function TripEditScreen() {
       prev.map((d) => (d.day !== dayNum ? d : { ...d, activities: [...d.activities, blank] })),
     );
     setExpandedId(id);
+  }
+
+  function duplicateActivity(dayNum: number, activityId: string) {
+    markDirty();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setDays((prev) =>
+      prev.map((d) => {
+        if (d.day !== dayNum) return d;
+        const idx = d.activities.findIndex((a) => a.id === activityId);
+        if (idx < 0) return d;
+        const original = d.activities[idx];
+        const copy: Activity = {
+          ...original,
+          id: newActivityId(),
+          name: original.name + ' (copy)',
+        };
+        const updated = [...d.activities];
+        updated.splice(idx + 1, 0, copy);
+        return { ...d, activities: updated };
+      }),
+    );
+  }
+
+  async function suggestActivity(dayNum: number, type: ActivityType) {
+    if (!destination.trim()) {
+      Alert.alert('No destination', 'Please set a destination first so AI can suggest activities.');
+      return;
+    }
+
+    setSuggestingForDay(dayNum);
+    try {
+      const day = days.find((d) => d.day === dayNum);
+      const existingNames = day?.activities.map((a) => a.name).filter(Boolean) ?? [];
+
+      const { data, error } = await supabase.functions.invoke('suggest-activity', {
+        body: {
+          destination: destination.trim(),
+          activityType: type,
+          existingActivities: existingNames,
+          dayLabel: day?.label ?? `Day ${dayNum}`,
+        },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const id = newActivityId();
+      const suggested: Activity = {
+        id,
+        name: data.name ?? '',
+        description: data.description ?? '',
+        locationName: data.locationName ?? '',
+        coordinates: { lat: 0, lng: 0 },
+        duration: data.duration ?? '',
+        type: (data.type as ActivityType) ?? type,
+        estimatedCost: data.estimatedCost ?? '',
+        tips: data.tips ?? '',
+      };
+
+      markDirty();
+      setDays((prev) =>
+        prev.map((d) => (d.day !== dayNum ? d : { ...d, activities: [...d.activities, suggested] })),
+      );
+      setExpandedId(id);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      Alert.alert('AI Suggestion Failed', e?.message ?? 'Could not generate suggestion. Try again.');
+    } finally {
+      setSuggestingForDay(null);
+    }
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -540,6 +660,7 @@ export default function TripEditScreen() {
       // Also update the top-level title column on trips table
       await supabase.from('trips').update({ title: title.trim() }).eq('id', tripId);
 
+      hasSaved.current = true;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     } catch {
@@ -580,7 +701,7 @@ export default function TripEditScreen() {
         }}
       >
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => confirmDiscard(() => router.back())}
           style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
         >
           <Ionicons name="chevron-back" size={24} color={TEXT} />
@@ -626,7 +747,7 @@ export default function TripEditScreen() {
             {editingTitle ? (
               <TextInput
                 value={title}
-                onChangeText={setTitle}
+                onChangeText={(v) => { markDirty(); setTitle(v); }}
                 onBlur={() => setEditingTitle(false)}
                 onSubmitEditing={() => setEditingTitle(false)}
                 autoFocus
@@ -660,7 +781,7 @@ export default function TripEditScreen() {
             {editingDestination ? (
               <TextInput
                 value={destination}
-                onChangeText={setDestination}
+                onChangeText={(v) => { markDirty(); setDestination(v); }}
                 onBlur={() => setEditingDestination(false)}
                 onSubmitEditing={() => setEditingDestination(false)}
                 autoFocus
@@ -875,8 +996,8 @@ export default function TripEditScreen() {
                           }
                         />
 
-                        {/* Action buttons row */}
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 16 }}>
+                        {/* Action buttons */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 12, gap: 6 }}>
                           {/* Move to day */}
                           {days.length > 1 && (
                             <TouchableOpacity
@@ -884,16 +1005,34 @@ export default function TripEditScreen() {
                               style={{
                                 flexDirection: 'row',
                                 alignItems: 'center',
-                                gap: 5,
+                                gap: 4,
                                 paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderRadius: 8,
+                                backgroundColor: TEAL + '10',
                               }}
                             >
-                              <Ionicons name="swap-horizontal-outline" size={15} color={TEAL} />
-                              <Text style={{ color: TEAL, fontSize: 13, fontWeight: '500' }}>
-                                Move to day
-                              </Text>
+                              <Ionicons name="swap-horizontal-outline" size={14} color={TEAL} />
+                              <Text style={{ color: TEAL, fontSize: 12, fontWeight: '600' }}>Move</Text>
                             </TouchableOpacity>
                           )}
+
+                          {/* Duplicate */}
+                          <TouchableOpacity
+                            onPress={() => duplicateActivity(day.day, activity.id)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 8,
+                              backgroundColor: '#8B5CF6' + '10',
+                            }}
+                          >
+                            <Ionicons name="copy-outline" size={14} color="#8B5CF6" />
+                            <Text style={{ color: '#8B5CF6', fontSize: 12, fontWeight: '600' }}>Duplicate</Text>
+                          </TouchableOpacity>
 
                           <View style={{ flex: 1 }} />
 
@@ -903,14 +1042,15 @@ export default function TripEditScreen() {
                             style={{
                               flexDirection: 'row',
                               alignItems: 'center',
-                              gap: 5,
+                              gap: 4,
                               paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 8,
+                              backgroundColor: DANGER + '10',
                             }}
                           >
-                            <Ionicons name="trash-outline" size={15} color={DANGER} />
-                            <Text style={{ color: DANGER, fontSize: 13, fontWeight: '500' }}>
-                              Remove
-                            </Text>
+                            <Ionicons name="trash-outline" size={14} color={DANGER} />
+                            <Text style={{ color: DANGER, fontSize: 12, fontWeight: '600' }}>Remove</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -919,25 +1059,59 @@ export default function TripEditScreen() {
                 );
               })}
 
-              {/* Add activity */}
-              <TouchableOpacity
-                onPress={() => addActivity(day.day)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                  borderRadius: 14,
-                  borderWidth: 1.5,
-                  borderColor: TEAL + '40',
-                  borderStyle: 'dashed',
-                  backgroundColor: TEAL + '08',
-                }}
-              >
-                <Ionicons name="add-circle-outline" size={18} color={TEAL} />
-                <Text style={{ fontSize: 14, color: TEAL, fontWeight: '600' }}>Add activity</Text>
-              </TouchableOpacity>
+              {/* Add activity buttons */}
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => addActivity(day.day)}
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    paddingVertical: 12,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: TEAL + '40',
+                    borderStyle: 'dashed',
+                    backgroundColor: TEAL + '08',
+                  }}
+                >
+                  <Ionicons name="add-circle-outline" size={18} color={TEAL} />
+                  <Text style={{ fontSize: 13, color: TEAL, fontWeight: '600' }}>Add blank</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    setSuggestPickerDay(day.day);
+                    setShowSuggestPicker(true);
+                  }}
+                  disabled={suggestingForDay === day.day}
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    paddingVertical: 12,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: '#8B5CF6' + '40',
+                    borderStyle: 'dashed',
+                    backgroundColor: '#8B5CF6' + '08',
+                    opacity: suggestingForDay === day.day ? 0.5 : 1,
+                  }}
+                >
+                  {suggestingForDay === day.day ? (
+                    <ActivityIndicator size="small" color="#8B5CF6" />
+                  ) : (
+                    <>
+                      <Ionicons name="sparkles" size={16} color="#8B5CF6" />
+                      <Text style={{ fontSize: 13, color: '#8B5CF6', fontWeight: '600' }}>AI suggest</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         ))}
@@ -978,6 +1152,85 @@ export default function TripEditScreen() {
           Tap an activity to edit details. Use arrows to reorder, or move activities between days.
         </Text>
       </ScrollView>
+
+      {/* AI suggest type picker */}
+      <Modal visible={showSuggestPicker} transparent animationType="fade" onRequestClose={() => setShowSuggestPicker(false)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowSuggestPicker(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+            <View
+              style={{
+                backgroundColor: CARD,
+                borderRadius: 20,
+                padding: 20,
+                width: 280,
+                shadowColor: '#000',
+                shadowOpacity: 0.15,
+                shadowRadius: 20,
+                shadowOffset: { width: 0, height: 8 },
+                elevation: 8,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <Ionicons name="sparkles" size={20} color="#8B5CF6" />
+                <Text style={{ fontSize: 17, fontWeight: '700', color: TEXT }}>AI Suggest</Text>
+              </View>
+              <Text style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>
+                What type of activity should AI suggest?
+              </Text>
+
+              {(Object.keys(TYPE_ICONS) as ActivityType[]).map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  onPress={() => {
+                    setShowSuggestPicker(false);
+                    suggestActivity(suggestPickerDay, t);
+                  }}
+                  activeOpacity={0.65}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    borderRadius: 12,
+                    marginBottom: 4,
+                    backgroundColor: BG,
+                    gap: 10,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 10,
+                      backgroundColor: TYPE_COLORS[t] + '18',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Ionicons name={TYPE_ICONS[t]} size={16} color={TYPE_COLORS[t]} />
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT, flex: 1 }}>
+                    {t === 'food' ? 'Restaurant / Food' : t === 'activity' ? 'Activity / Sightseeing' : t === 'accommodation' ? 'Accommodation' : 'Transport'}
+                  </Text>
+                  <Ionicons name="sparkles-outline" size={16} color={LIGHT} />
+                </TouchableOpacity>
+              ))}
+
+              <TouchableOpacity
+                onPress={() => setShowSuggestPicker(false)}
+                activeOpacity={0.7}
+                style={{ alignItems: 'center', paddingTop: 12 }}
+              >
+                <Text style={{ color: MUTED, fontSize: 14, fontWeight: '500' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Move-to-day modal */}
       <MoveToDayModal
