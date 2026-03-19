@@ -28,6 +28,7 @@ import {
   hasSavedTrip,
 } from '../../lib/supabase';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
+import { useAuth } from '../../lib/context/AuthContext';
 import { cacheTripDetail, getCachedTripDetail } from '../../lib/offlineCache';
 import { checkAndAwardBadges } from '../../lib/badges';
 import { Badge } from '../../types';
@@ -77,6 +78,7 @@ interface TripRow {
   username?: string;
   user_avatar_emoji?: string;
   device_id?: string;
+  user_id?: string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -407,6 +409,8 @@ export default function TripDetailScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  const { user } = useAuth();
 
   const [trip, setTrip] = useState<TripRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -842,8 +846,8 @@ export default function TripDetailScreen() {
             >
               {itinerary?.title ?? trip.title}
             </Reanimated.Text>
-            {/* Edit button — owner only */}
-            {trip.device_id === deviceId && (
+            {/* Edit button — owner only (match by device_id or user_id) */}
+            {(trip.device_id === deviceId || (user && trip.user_id === user.id)) && (
               <TouchableOpacity
                 onPress={() =>
                   router.push({

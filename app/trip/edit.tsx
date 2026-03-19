@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   Text,
@@ -27,6 +28,7 @@ const BORDER = '#F3F4F6';
 const TEXT = '#111827';
 const MUTED = '#6B7280';
 const LIGHT = '#9CA3AF';
+const DANGER = '#EF4444';
 
 type ActivityType = 'food' | 'activity' | 'accommodation' | 'transport';
 
@@ -64,6 +66,103 @@ interface Day {
 
 function newActivityId() {
   return 'act_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+// ─── "Move to Day" picker modal ──────────────────────────────────────────────
+
+function MoveToDayModal({
+  visible,
+  days,
+  currentDay,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  days: Day[];
+  currentDay: number;
+  onSelect: (targetDay: number) => void;
+  onClose: () => void;
+}) {
+  const otherDays = days.filter((d) => d.day !== currentDay);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={onClose}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+      >
+        <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+          <View
+            style={{
+              backgroundColor: CARD,
+              borderRadius: 20,
+              padding: 20,
+              width: 280,
+              shadowColor: '#000',
+              shadowOpacity: 0.15,
+              shadowRadius: 20,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 8,
+            }}
+          >
+            <Text style={{ fontSize: 17, fontWeight: '700', color: TEXT, marginBottom: 4 }}>
+              Move to Day
+            </Text>
+            <Text style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>
+              Select which day to move this activity to
+            </Text>
+
+            {otherDays.map((d) => (
+              <TouchableOpacity
+                key={d.day}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onSelect(d.day);
+                }}
+                activeOpacity={0.65}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  borderRadius: 12,
+                  marginBottom: 4,
+                  backgroundColor: BG,
+                  gap: 10,
+                }}
+              >
+                <View
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    backgroundColor: TEAL,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: 'white', fontSize: 13, fontWeight: '700' }}>{d.day}</Text>
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT, flex: 1 }} numberOfLines={1}>
+                  {d.label}
+                </Text>
+                <Ionicons name="arrow-forward" size={16} color={LIGHT} />
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              onPress={onClose}
+              activeOpacity={0.7}
+              style={{ alignItems: 'center', paddingTop: 12 }}
+            >
+              <Text style={{ color: MUTED, fontSize: 14, fontWeight: '500' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
 }
 
 // ─── Activity editor (inline) ─────────────────────────────────────────────────
@@ -231,17 +330,25 @@ export default function TripEditScreen() {
   const insets = useSafeAreaInsets();
 
   const [days, setDays] = useState<Day[]>([]);
+  const [title, setTitle] = useState('');
+  const [destination, setDestination] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingDayNum, setEditingDayNum] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingDestination, setEditingDestination] = useState(false);
+
+  // Move-to-day modal state
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
+  const [moveActivityData, setMoveActivityData] = useState<{ dayNum: number; activityId: string } | null>(null);
 
   // Load itinerary on mount
   useEffect(() => {
     async function load() {
       const { data, error } = await supabase
         .from('trips')
-        .select('itinerary')
+        .select('itinerary, title')
         .eq('id', tripId)
         .single();
 
@@ -253,6 +360,8 @@ export default function TripEditScreen() {
 
       const itin = data.itinerary as ItineraryData;
       setDays(itin.days as Day[]);
+      setTitle(itin.title ?? data.title ?? '');
+      setDestination(itin.destination ?? '');
       setLoading(false);
     }
     if (tripId) load();
@@ -262,6 +371,46 @@ export default function TripEditScreen() {
 
   function updateDayLabel(dayNum: number, label: string) {
     setDays((prev) => prev.map((d) => (d.day === dayNum ? { ...d, label } : d)));
+  }
+
+  function addDay() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const nextNum = days.length > 0 ? Math.max(...days.map((d) => d.day)) + 1 : 1;
+    setDays((prev) => [
+      ...prev,
+      { day: nextNum, label: `Day ${nextNum}`, activities: [] },
+    ]);
+  }
+
+  function removeDay(dayNum: number) {
+    const day = days.find((d) => d.day === dayNum);
+    const actCount = day?.activities.length ?? 0;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      `Remove Day ${dayNum}?`,
+      actCount > 0
+        ? `This will also remove ${actCount} activit${actCount === 1 ? 'y' : 'ies'}.`
+        : 'This empty day will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            // Remove the day and renumber remaining days
+            setDays((prev) => {
+              const filtered = prev.filter((d) => d.day !== dayNum);
+              return filtered.map((d, i) => ({
+                ...d,
+                day: i + 1,
+                label: d.label.match(/^Day \d+$/) ? `Day ${i + 1}` : d.label,
+              }));
+            });
+          },
+        },
+      ],
+    );
   }
 
   // ── Activity operations ────────────────────────────────────────────────────
@@ -310,6 +459,32 @@ export default function TripEditScreen() {
     );
   }
 
+  function moveActivityToDay(fromDay: number, activityId: string, toDay: number) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setDays((prev) => {
+      let movedActivity: Activity | null = null;
+      // Remove from source day
+      const afterRemove = prev.map((d) => {
+        if (d.day !== fromDay) return d;
+        const idx = d.activities.findIndex((a) => a.id === activityId);
+        if (idx >= 0) movedActivity = d.activities[idx];
+        return { ...d, activities: d.activities.filter((a) => a.id !== activityId) };
+      });
+      if (!movedActivity) return prev;
+      // Add to target day
+      return afterRemove.map((d) => {
+        if (d.day !== toDay) return d;
+        return { ...d, activities: [...d.activities, movedActivity!] };
+      });
+    });
+    if (expandedId === activityId) setExpandedId(null);
+  }
+
+  function openMoveModal(dayNum: number, activityId: string) {
+    setMoveActivityData({ dayNum, activityId });
+    setMoveModalVisible(true);
+  }
+
   function addActivity(dayNum: number) {
     const id = newActivityId();
     const blank: Activity = {
@@ -332,6 +507,11 @@ export default function TripEditScreen() {
   // ── Save ───────────────────────────────────────────────────────────────────
 
   async function handleSave() {
+    if (!title.trim()) {
+      Alert.alert('Missing title', 'Please enter a trip title.');
+      return;
+    }
+
     // Basic validation — every activity must have a name
     for (const d of days) {
       for (const a of d.activities) {
@@ -344,12 +524,22 @@ export default function TripEditScreen() {
 
     setSaving(true);
     try {
-      // Rebuild a minimal ItineraryData to merge back with the stored one
+      // Rebuild ItineraryData to merge with the stored one
       const { data } = await supabase.from('trips').select('itinerary').eq('id', tripId).single();
       const base = (data?.itinerary ?? {}) as ItineraryData;
-      const updated: ItineraryData = { ...base, days: days as ItineraryData['days'] };
+      const updated: ItineraryData = {
+        ...base,
+        title: title.trim(),
+        destination: destination.trim(),
+        totalDays: days.length,
+        days: days as ItineraryData['days'],
+      };
 
       await updateTripItinerary(tripId, updated);
+
+      // Also update the top-level title column on trips table
+      await supabase.from('trips').update({ title: title.trim() }).eq('id', tripId);
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     } catch {
@@ -426,6 +616,79 @@ export default function TripEditScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* ── Trip title & destination ── */}
+        <View style={{ marginHorizontal: 16, marginTop: 16, backgroundColor: CARD, borderRadius: 14, borderWidth: 1, borderColor: BORDER, padding: 14, gap: 12 }}>
+          {/* Title */}
+          <View>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: LIGHT, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+              Trip Title
+            </Text>
+            {editingTitle ? (
+              <TextInput
+                value={title}
+                onChangeText={setTitle}
+                onBlur={() => setEditingTitle(false)}
+                onSubmitEditing={() => setEditingTitle(false)}
+                autoFocus
+                style={{
+                  fontSize: 18,
+                  fontWeight: '700',
+                  color: TEXT,
+                  borderBottomWidth: 1.5,
+                  borderBottomColor: TEAL,
+                  paddingVertical: 4,
+                }}
+              />
+            ) : (
+              <TouchableOpacity
+                onPress={() => setEditingTitle(true)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              >
+                <Text style={{ fontSize: 18, fontWeight: '700', color: TEXT, flex: 1 }} numberOfLines={2}>
+                  {title || 'Untitled Trip'}
+                </Text>
+                <Ionicons name="pencil-outline" size={15} color={LIGHT} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Destination */}
+          <View>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: LIGHT, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+              Destination
+            </Text>
+            {editingDestination ? (
+              <TextInput
+                value={destination}
+                onChangeText={setDestination}
+                onBlur={() => setEditingDestination(false)}
+                onSubmitEditing={() => setEditingDestination(false)}
+                autoFocus
+                style={{
+                  fontSize: 15,
+                  fontWeight: '500',
+                  color: TEXT,
+                  borderBottomWidth: 1.5,
+                  borderBottomColor: TEAL,
+                  paddingVertical: 4,
+                }}
+              />
+            ) : (
+              <TouchableOpacity
+                onPress={() => setEditingDestination(true)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              >
+                <Ionicons name="location-outline" size={16} color={TEAL} />
+                <Text style={{ fontSize: 15, fontWeight: '500', color: MUTED, flex: 1 }} numberOfLines={1}>
+                  {destination || 'Add destination'}
+                </Text>
+                <Ionicons name="pencil-outline" size={13} color={LIGHT} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* ── Days ── */}
         {days.map((day) => (
           <View key={day.day} style={{ marginTop: 16 }}>
             {/* Day header */}
@@ -478,6 +741,23 @@ export default function TripEditScreen() {
                   <Ionicons name="pencil-outline" size={13} color={LIGHT} />
                 </TouchableOpacity>
               )}
+
+              {/* Remove day button */}
+              {days.length > 1 && (
+                <TouchableOpacity
+                  onPress={() => removeDay(day.day)}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 8,
+                    backgroundColor: DANGER + '10',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons name="close" size={16} color={DANGER} />
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Activities */}
@@ -526,7 +806,7 @@ export default function TripEditScreen() {
                         <Ionicons name={TYPE_ICONS[activity.type]} size={16} color={color} />
                       </View>
 
-                      {/* Name + location */}
+                      {/* Name + duration */}
                       <View style={{ flex: 1 }}>
                         <Text
                           style={{ fontSize: 14, fontWeight: '600', color: TEXT }}
@@ -595,23 +875,44 @@ export default function TripEditScreen() {
                           }
                         />
 
-                        {/* Delete */}
-                        <TouchableOpacity
-                          onPress={() => deleteActivity(day.day, activity.id)}
-                          style={{
-                            marginTop: 12,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 6,
-                            alignSelf: 'flex-start',
-                            paddingVertical: 6,
-                          }}
-                        >
-                          <Ionicons name="trash-outline" size={15} color="#EF4444" />
-                          <Text style={{ color: '#EF4444', fontSize: 13, fontWeight: '500' }}>
-                            Remove activity
-                          </Text>
-                        </TouchableOpacity>
+                        {/* Action buttons row */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 16 }}>
+                          {/* Move to day */}
+                          {days.length > 1 && (
+                            <TouchableOpacity
+                              onPress={() => openMoveModal(day.day, activity.id)}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 5,
+                                paddingVertical: 6,
+                              }}
+                            >
+                              <Ionicons name="swap-horizontal-outline" size={15} color={TEAL} />
+                              <Text style={{ color: TEAL, fontSize: 13, fontWeight: '500' }}>
+                                Move to day
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+
+                          <View style={{ flex: 1 }} />
+
+                          {/* Delete */}
+                          <TouchableOpacity
+                            onPress={() => deleteActivity(day.day, activity.id)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 5,
+                              paddingVertical: 6,
+                            }}
+                          >
+                            <Ionicons name="trash-outline" size={15} color={DANGER} />
+                            <Text style={{ color: DANGER, fontSize: 13, fontWeight: '500' }}>
+                              Remove
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     )}
                   </View>
@@ -641,19 +942,60 @@ export default function TripEditScreen() {
           </View>
         ))}
 
+        {/* ── Add day button ── */}
+        <TouchableOpacity
+          onPress={addDay}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            marginHorizontal: 16,
+            marginTop: 20,
+            paddingVertical: 14,
+            borderRadius: 14,
+            borderWidth: 1.5,
+            borderColor: TEAL + '40',
+            borderStyle: 'dashed',
+            backgroundColor: TEAL + '06',
+          }}
+        >
+          <Ionicons name="calendar-outline" size={18} color={TEAL} />
+          <Text style={{ fontSize: 14, color: TEAL, fontWeight: '600' }}>Add Day {days.length + 1}</Text>
+        </TouchableOpacity>
+
         {/* Bottom hint */}
         <Text
           style={{
             textAlign: 'center',
             color: LIGHT,
             fontSize: 12,
-            marginTop: 24,
+            marginTop: 20,
             marginHorizontal: 32,
+            lineHeight: 18,
           }}
         >
-          Tap an activity to edit details. Use the arrows to reorder within a day.
+          Tap an activity to edit details. Use arrows to reorder, or move activities between days.
         </Text>
       </ScrollView>
+
+      {/* Move-to-day modal */}
+      <MoveToDayModal
+        visible={moveModalVisible}
+        days={days}
+        currentDay={moveActivityData?.dayNum ?? 0}
+        onSelect={(targetDay) => {
+          if (moveActivityData) {
+            moveActivityToDay(moveActivityData.dayNum, moveActivityData.activityId, targetDay);
+          }
+          setMoveModalVisible(false);
+          setMoveActivityData(null);
+        }}
+        onClose={() => {
+          setMoveModalVisible(false);
+          setMoveActivityData(null);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
