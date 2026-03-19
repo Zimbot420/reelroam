@@ -261,7 +261,10 @@ export default function DiscoverScreen() {
           keyExtractor={keyExtractor}
           renderItem={renderItem}
           getItemLayout={getItemLayout}
-          pagingEnabled
+          snapToInterval={cardHeight}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          disableIntervalMomentum
           showsVerticalScrollIndicator={false}
           onEndReached={loadMore}
           onEndReachedThreshold={2}
