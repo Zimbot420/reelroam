@@ -121,7 +121,23 @@ export default function HomeScreen() {
       {/* Star field */}
       <StarField />
 
-      {/* ── Notification bell (top-right, only when signed in) ── */}
+      {/* ── Search + Notification icons (top-right) ── */}
+      <View style={{ position: 'absolute', top: insets.top + 10, right: 16, zIndex: 10, flexDirection: 'row', gap: 4 }}>
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/search' as any);
+          }}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="search-outline" size={22} color="rgba(255,255,255,0.7)" />
+        </TouchableOpacity>
       {isAuthenticated && (
         <TouchableOpacity
           onPress={() => {
@@ -129,10 +145,6 @@ export default function HomeScreen() {
             router.push('/notifications' as any);
           }}
           style={{
-            position: 'absolute',
-            top: insets.top + 10,
-            right: 16,
-            zIndex: 10,
             width: 36,
             height: 36,
             borderRadius: 18,
@@ -156,6 +168,7 @@ export default function HomeScreen() {
           )}
         </TouchableOpacity>
       )}
+      </View>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}

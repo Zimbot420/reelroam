@@ -276,6 +276,59 @@ export async function getFollowingUsernames(deviceId: string): Promise<string[]>
   return (data ?? []).map((r: any) => r.following_username);
 }
 
+// ─── Search ───────────────────────────────────────────────────────────────────
+
+export interface SearchResult {
+  trips: any[];
+  users: any[];
+}
+
+export async function searchAll(query: string): Promise<SearchResult> {
+  const q = query.trim();
+  if (!q) return { trips: [], users: [] };
+
+  const pattern = `%${q}%`;
+
+  // Search trips by title or destination
+  const tripsPromise = supabase
+    .from('trips')
+    .select('id, title, share_slug, itinerary, username, user_avatar_emoji, like_count, save_count, comment_count, created_at')
+    .eq('is_public', true)
+    .or(`title.ilike.${pattern},username.ilike.${pattern}`)
+    .order('like_count', { ascending: false })
+    .limit(20);
+
+  // Also search by itinerary destination (separate query since it's JSONB)
+  const destPromise = supabase
+    .from('trips')
+    .select('id, title, share_slug, itinerary, username, user_avatar_emoji, like_count, save_count, comment_count, created_at')
+    .eq('is_public', true)
+    .ilike('itinerary->>destination', pattern)
+    .order('like_count', { ascending: false })
+    .limit(20);
+
+  // Search users by username or display_name
+  const usersPromise = supabase
+    .from('profiles')
+    .select('username, display_name, avatar_emoji, avatar_url, bio, visited_countries')
+    .not('username', 'is', null)
+    .or(`username.ilike.${pattern},display_name.ilike.${pattern}`)
+    .limit(15);
+
+  const [tripsRes, destRes, usersRes] = await Promise.all([tripsPromise, destPromise, usersPromise]);
+
+  // Merge + deduplicate trips
+  const allTrips = [...(tripsRes.data ?? []), ...(destRes.data ?? [])];
+  const seen = new Set<string>();
+  const trips = allTrips.filter((t) => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+
+  return { trips, users: usersRes.data ?? [] };
+}
+
 // ─── Feed publishing ─────────────────────────────────────────────────────────
 
 export async function publishTrip(tripId: string, username: string, avatarEmoji: string) {

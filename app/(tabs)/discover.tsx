@@ -319,9 +319,26 @@ export default function DiscoverScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingVertical: 2 }}
         >
+          {/* Search icon */}
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/search' as any); }}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              backgroundColor: 'rgba(255,255,255,0.12)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.15)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Ionicons name="search" size={16} color="rgba(255,255,255,0.8)" />
+          </TouchableOpacity>
+
           {CATEGORY_IDS.map((catId) => {
             const isActive = activeCategory === catId;
-            const label = t.discover.categories[catId];
+            const label = t.discover.categories?.[catId] ?? catId;
             return (
               <TouchableOpacity
                 key={catId}
