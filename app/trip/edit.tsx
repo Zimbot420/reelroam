@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DraggableFlatList, { RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -354,7 +355,59 @@ export default function TripEditScreen() {
   const isDirty = useRef(false);
   const hasSaved = useRef(false);
 
+  // Undo/redo history
+  const historyRef = useRef<{ past: string[]; future: string[] }>({ past: [], future: [] });
+  const isUndoRedo = useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const MAX_HISTORY = 50;
+
+  function pushHistory(snapshot: Day[]) {
+    if (isUndoRedo.current) return;
+    const json = JSON.stringify(snapshot);
+    const h = historyRef.current;
+    h.past.push(json);
+    if (h.past.length > MAX_HISTORY) h.past.shift();
+    h.future = [];
+    setCanUndo(true);
+    setCanRedo(false);
+  }
+
+  function handleUndo() {
+    const h = historyRef.current;
+    if (h.past.length === 0) return;
+    const current = JSON.stringify(days);
+    h.future.push(current);
+    const prev = h.past.pop()!;
+    isUndoRedo.current = true;
+    setDays(JSON.parse(prev));
+    isUndoRedo.current = false;
+    setCanUndo(h.past.length > 0);
+    setCanRedo(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }
+
+  function handleRedo() {
+    const h = historyRef.current;
+    if (h.future.length === 0) return;
+    const current = JSON.stringify(days);
+    h.past.push(current);
+    const next = h.future.pop()!;
+    isUndoRedo.current = true;
+    setDays(JSON.parse(next));
+    isUndoRedo.current = false;
+    setCanUndo(true);
+    setCanRedo(h.future.length > 0);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }
+
   function markDirty() {
+    isDirty.current = true;
+  }
+
+  /** Call before mutating days to snapshot current state for undo */
+  function markDirtyWithHistory() {
+    pushHistory(days);
     isDirty.current = true;
   }
 
@@ -413,12 +466,12 @@ export default function TripEditScreen() {
   // ── Day operations ─────────────────────────────────────────────────────────
 
   function updateDayLabel(dayNum: number, label: string) {
-    markDirty();
+    markDirtyWithHistory();
     setDays((prev) => prev.map((d) => (d.day === dayNum ? { ...d, label } : d)));
   }
 
   function addDay() {
-    markDirty();
+    markDirtyWithHistory();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const nextNum = days.length > 0 ? Math.max(...days.map((d) => d.day)) + 1 : 1;
     setDays((prev) => [
@@ -461,7 +514,7 @@ export default function TripEditScreen() {
   // ── Activity operations ────────────────────────────────────────────────────
 
   function updateActivity(dayNum: number, id: string, field: keyof Activity, value: string | ActivityType) {
-    markDirty();
+    markDirtyWithHistory();
     setDays((prev) =>
       prev.map((d) =>
         d.day !== dayNum
@@ -472,7 +525,7 @@ export default function TripEditScreen() {
   }
 
   function deleteActivity(dayNum: number, id: string) {
-    markDirty();
+    markDirtyWithHistory();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert('Remove activity?', 'This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
@@ -492,7 +545,7 @@ export default function TripEditScreen() {
   }
 
   function moveActivity(dayNum: number, id: string, dir: 'up' | 'down') {
-    markDirty();
+    markDirtyWithHistory();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setDays((prev) =>
       prev.map((d) => {
@@ -508,7 +561,7 @@ export default function TripEditScreen() {
   }
 
   function moveActivityToDay(fromDay: number, activityId: string, toDay: number) {
-    markDirty();
+    markDirtyWithHistory();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setDays((prev) => {
       let movedActivity: Activity | null = null;
@@ -529,13 +582,21 @@ export default function TripEditScreen() {
     if (expandedId === activityId) setExpandedId(null);
   }
 
+  function reorderActivities(dayNum: number, reordered: Activity[]) {
+    markDirtyWithHistory();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setDays((prev) =>
+      prev.map((d) => (d.day !== dayNum ? d : { ...d, activities: reordered })),
+    );
+  }
+
   function openMoveModal(dayNum: number, activityId: string) {
     setMoveActivityData({ dayNum, activityId });
     setMoveModalVisible(true);
   }
 
   function addActivity(dayNum: number) {
-    markDirty();
+    markDirtyWithHistory();
     const id = newActivityId();
     const blank: Activity = {
       id,
@@ -555,7 +616,7 @@ export default function TripEditScreen() {
   }
 
   function duplicateActivity(dayNum: number, activityId: string) {
-    markDirty();
+    markDirtyWithHistory();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setDays((prev) =>
       prev.map((d) => {
@@ -707,7 +768,25 @@ export default function TripEditScreen() {
           <Ionicons name="chevron-back" size={24} color={TEXT} />
         </TouchableOpacity>
 
-        <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: TEXT }}>Edit Itinerary</Text>
+        {/* Undo / Redo */}
+        <View style={{ flexDirection: 'row', gap: 2 }}>
+          <TouchableOpacity
+            onPress={handleUndo}
+            disabled={!canUndo}
+            style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', opacity: canUndo ? 1 : 0.25 }}
+          >
+            <Ionicons name="arrow-undo" size={20} color={TEXT} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleRedo}
+            disabled={!canRedo}
+            style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', opacity: canRedo ? 1 : 0.25 }}
+          >
+            <Ionicons name="arrow-redo" size={20} color={TEXT} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flex: 1 }} />
 
         <TouchableOpacity
           onPress={handleSave}
@@ -881,183 +960,181 @@ export default function TripEditScreen() {
               )}
             </View>
 
-            {/* Activities */}
-            <View style={{ marginHorizontal: 16, gap: 8 }}>
-              {day.activities.map((activity, idx) => {
-                const isExpanded = expandedId === activity.id;
-                const color = TYPE_COLORS[activity.type] ?? TEAL;
+            {/* Activities — draggable list */}
+            <View style={{ marginHorizontal: 16 }}>
+              <DraggableFlatList
+                data={day.activities}
+                keyExtractor={(item) => item.id}
+                scrollEnabled={false}
+                onDragEnd={({ data: reordered }) => reorderActivities(day.day, reordered)}
+                renderItem={({ item: activity, drag, isActive }: RenderItemParams<Activity>) => {
+                  const isExpanded = expandedId === activity.id;
+                  const color = TYPE_COLORS[activity.type] ?? TEAL;
 
-                return (
-                  <View
-                    key={activity.id}
-                    style={{
-                      backgroundColor: CARD,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor: isExpanded ? TEAL + '50' : BORDER,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {/* Activity row */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        setExpandedId(isExpanded ? null : activity.id);
-                      }}
-                      activeOpacity={0.7}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        padding: 12,
-                        gap: 10,
-                      }}
-                    >
-                      {/* Type icon badge */}
+                  return (
+                    <ScaleDecorator>
                       <View
                         style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 10,
-                          backgroundColor: color + '18',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
+                          backgroundColor: isActive ? '#F0FDF9' : CARD,
+                          borderRadius: 14,
+                          borderWidth: 1,
+                          borderColor: isActive ? TEAL : isExpanded ? TEAL + '50' : BORDER,
+                          overflow: 'hidden',
+                          marginBottom: 8,
+                          shadowColor: isActive ? TEAL : 'transparent',
+                          shadowOpacity: isActive ? 0.15 : 0,
+                          shadowRadius: 8,
+                          shadowOffset: { width: 0, height: 4 },
+                          elevation: isActive ? 6 : 0,
                         }}
                       >
-                        <Ionicons name={TYPE_ICONS[activity.type]} size={16} color={color} />
-                      </View>
-
-                      {/* Name + duration */}
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={{ fontSize: 14, fontWeight: '600', color: TEXT }}
-                          numberOfLines={1}
+                        {/* Activity row */}
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            padding: 12,
+                            gap: 10,
+                          }}
                         >
-                          {activity.name || 'Untitled activity'}
-                        </Text>
-                        {!!activity.duration && (
-                          <Text style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{activity.duration}</Text>
-                        )}
-                      </View>
-
-                      {/* Reorder + expand */}
-                      {!isExpanded && (
-                        <View style={{ flexDirection: 'row', gap: 2 }}>
+                          {/* Drag handle */}
                           <TouchableOpacity
-                            onPress={() => moveActivity(day.day, activity.id, 'up')}
-                            disabled={idx === 0}
+                            onLongPress={drag}
+                            delayLongPress={150}
+                            disabled={isActive}
                             style={{
-                              width: 30,
-                              height: 30,
+                              width: 28,
+                              height: 34,
                               alignItems: 'center',
                               justifyContent: 'center',
-                              opacity: idx === 0 ? 0.25 : 1,
+                              flexShrink: 0,
                             }}
                           >
-                            <Ionicons name="chevron-up" size={18} color={MUTED} />
+                            <Ionicons name="reorder-three" size={20} color={isActive ? TEAL : LIGHT} />
                           </TouchableOpacity>
+
+                          {/* Type icon badge */}
                           <TouchableOpacity
-                            onPress={() => moveActivity(day.day, activity.id, 'down')}
-                            disabled={idx === day.activities.length - 1}
-                            style={{
-                              width: 30,
-                              height: 30,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              opacity: idx === day.activities.length - 1 ? 0.25 : 1,
+                            onPress={() => {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              setExpandedId(isExpanded ? null : activity.id);
                             }}
+                            activeOpacity={0.7}
+                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
                           >
-                            <Ionicons name="chevron-down" size={18} color={MUTED} />
-                          </TouchableOpacity>
-                        </View>
-                      )}
-
-                      <Ionicons
-                        name={isExpanded ? 'chevron-up' : 'create-outline'}
-                        size={16}
-                        color={isExpanded ? TEAL : LIGHT}
-                      />
-                    </TouchableOpacity>
-
-                    {/* Expanded editor */}
-                    {isExpanded && (
-                      <View
-                        style={{
-                          paddingHorizontal: 12,
-                          paddingBottom: 12,
-                          borderTopWidth: 1,
-                          borderTopColor: BORDER,
-                        }}
-                      >
-                        <ActivityEditor
-                          activity={activity}
-                          onChange={(field, value) =>
-                            updateActivity(day.day, activity.id, field, value as string)
-                          }
-                        />
-
-                        {/* Action buttons */}
-                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 12, gap: 6 }}>
-                          {/* Move to day */}
-                          {days.length > 1 && (
-                            <TouchableOpacity
-                              onPress={() => openMoveModal(day.day, activity.id)}
+                            <View
                               style={{
-                                flexDirection: 'row',
+                                width: 34,
+                                height: 34,
+                                borderRadius: 10,
+                                backgroundColor: color + '18',
                                 alignItems: 'center',
-                                gap: 4,
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 8,
-                                backgroundColor: TEAL + '10',
+                                justifyContent: 'center',
+                                flexShrink: 0,
                               }}
                             >
-                              <Ionicons name="swap-horizontal-outline" size={14} color={TEAL} />
-                              <Text style={{ color: TEAL, fontSize: 12, fontWeight: '600' }}>Move</Text>
-                            </TouchableOpacity>
-                          )}
+                              <Ionicons name={TYPE_ICONS[activity.type]} size={16} color={color} />
+                            </View>
 
-                          {/* Duplicate */}
-                          <TouchableOpacity
-                            onPress={() => duplicateActivity(day.day, activity.id)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 4,
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 8,
-                              backgroundColor: '#8B5CF6' + '10',
-                            }}
-                          >
-                            <Ionicons name="copy-outline" size={14} color="#8B5CF6" />
-                            <Text style={{ color: '#8B5CF6', fontSize: 12, fontWeight: '600' }}>Duplicate</Text>
-                          </TouchableOpacity>
+                            {/* Name + duration */}
+                            <View style={{ flex: 1 }}>
+                              <Text
+                                style={{ fontSize: 14, fontWeight: '600', color: TEXT }}
+                                numberOfLines={1}
+                              >
+                                {activity.name || 'Untitled activity'}
+                              </Text>
+                              {!!activity.duration && (
+                                <Text style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>{activity.duration}</Text>
+                              )}
+                            </View>
 
-                          <View style={{ flex: 1 }} />
-
-                          {/* Delete */}
-                          <TouchableOpacity
-                            onPress={() => deleteActivity(day.day, activity.id)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 4,
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 8,
-                              backgroundColor: DANGER + '10',
-                            }}
-                          >
-                            <Ionicons name="trash-outline" size={14} color={DANGER} />
-                            <Text style={{ color: DANGER, fontSize: 12, fontWeight: '600' }}>Remove</Text>
+                            <Ionicons
+                              name={isExpanded ? 'chevron-up' : 'create-outline'}
+                              size={16}
+                              color={isExpanded ? TEAL : LIGHT}
+                            />
                           </TouchableOpacity>
                         </View>
+
+                        {/* Expanded editor */}
+                        {isExpanded && (
+                          <View
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingBottom: 12,
+                              borderTopWidth: 1,
+                              borderTopColor: BORDER,
+                            }}
+                          >
+                            <ActivityEditor
+                              activity={activity}
+                              onChange={(field, value) =>
+                                updateActivity(day.day, activity.id, field, value as string)
+                              }
+                            />
+
+                            {/* Action buttons */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 12, gap: 6 }}>
+                              {days.length > 1 && (
+                                <TouchableOpacity
+                                  onPress={() => openMoveModal(day.day, activity.id)}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 10,
+                                    borderRadius: 8,
+                                    backgroundColor: TEAL + '10',
+                                  }}
+                                >
+                                  <Ionicons name="swap-horizontal-outline" size={14} color={TEAL} />
+                                  <Text style={{ color: TEAL, fontSize: 12, fontWeight: '600' }}>Move</Text>
+                                </TouchableOpacity>
+                              )}
+
+                              <TouchableOpacity
+                                onPress={() => duplicateActivity(day.day, activity.id)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 10,
+                                  borderRadius: 8,
+                                  backgroundColor: '#8B5CF6' + '10',
+                                }}
+                              >
+                                <Ionicons name="copy-outline" size={14} color="#8B5CF6" />
+                                <Text style={{ color: '#8B5CF6', fontSize: 12, fontWeight: '600' }}>Duplicate</Text>
+                              </TouchableOpacity>
+
+                              <View style={{ flex: 1 }} />
+
+                              <TouchableOpacity
+                                onPress={() => deleteActivity(day.day, activity.id)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 10,
+                                  borderRadius: 8,
+                                  backgroundColor: DANGER + '10',
+                                }}
+                              >
+                                <Ionicons name="trash-outline" size={14} color={DANGER} />
+                                <Text style={{ color: DANGER, fontSize: 12, fontWeight: '600' }}>Remove</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
-                );
-              })}
+                    </ScaleDecorator>
+                  );
+                }}
+              />
 
               {/* Add activity buttons */}
               <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -1149,7 +1226,7 @@ export default function TripEditScreen() {
             lineHeight: 18,
           }}
         >
-          Tap an activity to edit details. Use arrows to reorder, or move activities between days.
+          Tap to edit, long-press the drag handle to reorder. Use undo/redo in the toolbar.
         </Text>
       </ScrollView>
 

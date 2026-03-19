@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Dimensions,
+  KeyboardAvoidingView,
+  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
   PanResponder,
+  Platform,
   ScrollView,
   Share,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -29,6 +34,7 @@ import {
 } from '../../lib/supabase';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
 import { useAuth } from '../../lib/context/AuthContext';
+import { updateTripItinerary } from '../../lib/api/trips';
 import { cacheTripDetail, getCachedTripDetail } from '../../lib/offlineCache';
 import { checkAndAwardBadges } from '../../lib/badges';
 import { Badge } from '../../types';
@@ -226,10 +232,12 @@ function ActivityCard({
   activity,
   isSelected,
   onPress,
+  onLongPress,
 }: {
   activity: ItineraryActivity;
   isSelected: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
@@ -280,6 +288,13 @@ function ActivityCard({
   return (
     <TouchableOpacity
       onPress={handlePress}
+      onLongPress={() => {
+        if (onLongPress) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onLongPress();
+        }
+      }}
+      delayLongPress={400}
       activeOpacity={0.85}
       style={{
         backgroundColor: 'white',
@@ -427,6 +442,56 @@ export default function TripDetailScreen() {
   const [celebrationBadge, setCelebrationBadge] = useState<Badge | null>(null);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
   const newBadgeQueueRef = useRef<Badge[]>([]);
+
+  // Quick-edit state
+  const [quickEditActivity, setQuickEditActivity] = useState<ItineraryActivity | null>(null);
+  const [quickEditDayNum, setQuickEditDayNum] = useState<number>(0);
+  const [quickEditSaving, setQuickEditSaving] = useState(false);
+  const [qeName, setQeName] = useState('');
+  const [qeDescription, setQeDescription] = useState('');
+  const [qeDuration, setQeDuration] = useState('');
+  const [qeCost, setQeCost] = useState('');
+  const [qeTips, setQeTips] = useState('');
+
+  const isOwner = trip ? (trip.device_id === deviceId || (user && trip.user_id === user.id)) : false;
+
+  function openQuickEdit(activity: ItineraryActivity, dayNum: number) {
+    setQuickEditActivity(activity);
+    setQuickEditDayNum(dayNum);
+    setQeName(activity.name);
+    setQeDescription(activity.description);
+    setQeDuration(activity.duration);
+    setQeCost(activity.estimatedCost);
+    setQeTips(activity.tips);
+  }
+
+  async function saveQuickEdit() {
+    if (!trip || !quickEditActivity) return;
+    setQuickEditSaving(true);
+    try {
+      const { data } = await supabase.from('trips').select('itinerary').eq('id', trip.id).single();
+      if (!data?.itinerary) throw new Error('No itinerary');
+      const itin = data.itinerary as any;
+      const updatedDays = itin.days.map((d: any) => ({
+        ...d,
+        activities: d.activities.map((a: any) => {
+          if (a.id !== quickEditActivity.id) return a;
+          return { ...a, name: qeName.trim(), description: qeDescription.trim(), duration: qeDuration.trim(), estimatedCost: qeCost.trim(), tips: qeTips.trim() };
+        }),
+      }));
+      const updated = { ...itin, days: updatedDays };
+      await updateTripItinerary(trip.id, updated);
+      // Refresh trip data
+      const { data: refreshed } = await supabase.from('trips').select('*').eq('id', trip.id).single();
+      if (refreshed) setTrip(refreshed as unknown as TripRow);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setQuickEditActivity(null);
+    } catch {
+      Alert.alert('Error', 'Failed to save. Try the full edit screen.');
+    } finally {
+      setQuickEditSaving(false);
+    }
+  }
 
   const mapRef = useRef<MapView>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -846,8 +911,8 @@ export default function TripDetailScreen() {
             >
               {itinerary?.title ?? trip.title}
             </Reanimated.Text>
-            {/* Edit button — owner only (match by device_id or user_id) */}
-            {(trip.device_id === deviceId || (user && trip.user_id === user.id)) && (
+            {/* Edit button — owner only */}
+            {isOwner && (
               <TouchableOpacity
                 onPress={() =>
                   router.push({
@@ -1061,6 +1126,7 @@ export default function TripDetailScreen() {
                           }, 500);
                         }
                       }}
+                      onLongPress={isOwner ? () => openQuickEdit(activity, day.day) : undefined}
                     />
                   </View>
                 </View>
@@ -1192,6 +1258,116 @@ export default function TripDetailScreen() {
           }
         }}
       />
+
+      {/* Quick-edit bottom sheet */}
+      <Modal
+        visible={!!quickEditActivity}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setQuickEditActivity(null)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setQuickEditActivity(null)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        >
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+              <View style={{
+                backgroundColor: 'white',
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                paddingBottom: insets.bottom + 16,
+              }}>
+                {/* Handle */}
+                <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 8 }}>
+                  <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#D1D5DB' }} />
+                </View>
+
+                {/* Header */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12 }}>
+                  <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: '#111827' }}>Quick Edit</Text>
+                  <TouchableOpacity
+                    onPress={saveQuickEdit}
+                    disabled={quickEditSaving}
+                    style={{
+                      backgroundColor: TEAL,
+                      paddingHorizontal: 16,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      opacity: quickEditSaving ? 0.6 : 1,
+                    }}
+                  >
+                    {quickEditSaving ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView
+                  style={{ maxHeight: 360 }}
+                  contentContainerStyle={{ paddingHorizontal: 20, gap: 10, paddingBottom: 8 }}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {/* Name */}
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Name</Text>
+                    <TextInput
+                      value={qeName}
+                      onChangeText={setQeName}
+                      style={{ backgroundColor: '#F9FAFB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: '#111827', borderWidth: 1, borderColor: '#F3F4F6' }}
+                    />
+                  </View>
+
+                  {/* Duration + Cost */}
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Duration</Text>
+                      <TextInput
+                        value={qeDuration}
+                        onChangeText={setQeDuration}
+                        style={{ backgroundColor: '#F9FAFB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827', borderWidth: 1, borderColor: '#F3F4F6' }}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Cost</Text>
+                      <TextInput
+                        value={qeCost}
+                        onChangeText={setQeCost}
+                        style={{ backgroundColor: '#F9FAFB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827', borderWidth: 1, borderColor: '#F3F4F6' }}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Description */}
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Description</Text>
+                    <TextInput
+                      value={qeDescription}
+                      onChangeText={setQeDescription}
+                      multiline
+                      style={{ backgroundColor: '#F9FAFB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827', borderWidth: 1, borderColor: '#F3F4F6', minHeight: 64, textAlignVertical: 'top' }}
+                    />
+                  </View>
+
+                  {/* Tips */}
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Tips</Text>
+                    <TextInput
+                      value={qeTips}
+                      onChangeText={setQeTips}
+                      multiline
+                      style={{ backgroundColor: '#F9FAFB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827', borderWidth: 1, borderColor: '#F3F4F6', minHeight: 48, textAlignVertical: 'top' }}
+                    />
+                  </View>
+                </ScrollView>
+              </View>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
