@@ -203,8 +203,6 @@ export async function addComment(
     .select()
     .single();
   if (error) throw error;
-  await supabase.rpc('increment_comment_count', { trip_id_arg: tripId }).catch(() => {});
-  notifyTripOwner(tripId, 'comment_added', 'New comment on your trip!', content.trim().slice(0, 80), { trip_id: tripId }).catch(() => {});
   return data as TripComment;
 }
 

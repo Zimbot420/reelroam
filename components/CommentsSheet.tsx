@@ -19,10 +19,10 @@ import * as Haptics from 'expo-haptics';
 import {
   supabase,
   getComments,
-  addComment,
   deleteComment,
   TripComment,
 } from '../lib/supabase';
+import { notifyTripOwner } from '../lib/notifications';
 import { useAuth } from '../lib/context/AuthContext';
 import { getOrCreateDeviceId } from '../lib/deviceId';
 
@@ -172,29 +172,46 @@ export default function CommentsSheet({
       const did = deviceId || await getOrCreateDeviceId();
       if (!did) throw new Error('Could not identify device');
 
-      // Fetch profile info for the comment
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('username, avatar_emoji')
-        .eq('device_id', did)
-        .maybeSingle();
+      // Fetch profile info (best-effort, don't fail if this errors)
+      let profileUsername = authUsername ?? undefined;
+      let profileEmoji: string | undefined;
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('username, avatar_emoji')
+          .eq('device_id', did)
+          .maybeSingle();
+        if (profile?.username) profileUsername = profile.username;
+        if (profile?.avatar_emoji) profileEmoji = profile.avatar_emoji;
+      } catch {}
 
-      const newComment = await addComment(
-        tripId,
-        did,
-        trimmed,
-        user?.id,
-        profile?.username ?? authUsername ?? undefined,
-        profile?.avatar_emoji ?? undefined,
-      );
+      // Insert the comment — this is the only critical call
+      const { data: inserted, error: insertError } = await supabase
+        .from('trip_comments')
+        .insert({
+          trip_id: tripId,
+          device_id: did,
+          user_id: user?.id ?? null,
+          username: profileUsername ?? null,
+          avatar_emoji: profileEmoji ?? null,
+          content: trimmed,
+        })
+        .select()
+        .single();
 
+      if (insertError) throw insertError;
+
+      // Comment posted — update UI immediately
+      const newComment = inserted as TripComment;
       setComments((prev) => [...prev, newComment]);
       onCommentCountChange?.(comments.length + 1);
       setText('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      // Scroll to bottom
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+
+      // Side effects — fire-and-forget, never show errors for these
+      try { await supabase.rpc('increment_comment_count', { trip_id_arg: tripId }); } catch {}
+      try { notifyTripOwner(tripId, 'comment_added', 'New comment on your trip!', trimmed.slice(0, 80), { trip_id: tripId }); } catch {}
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Could not post comment. Please try again.');
     } finally {
