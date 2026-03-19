@@ -101,43 +101,6 @@ function getCountryFlag(country: string | null | undefined): string {
   return COUNTRY_FLAGS[key] ?? '🌍';
 }
 
-// ─── Country coordinates for map markers ──────────────────────────────────────
-
-const COUNTRY_COORDS: Record<string, { latitude: number; longitude: number }> = {
-  japan:          { latitude: 36.2048, longitude: 138.2529 },
-  thailand:       { latitude: 15.87, longitude: 100.99 },
-  france:         { latitude: 46.23, longitude: 2.21 },
-  italy:          { latitude: 41.87, longitude: 12.57 },
-  spain:          { latitude: 40.46, longitude: -3.75 },
-  usa:            { latitude: 37.09, longitude: -95.71 },
-  'united states': { latitude: 37.09, longitude: -95.71 },
-  australia:      { latitude: -25.27, longitude: 133.78 },
-  indonesia:      { latitude: -0.79, longitude: 113.92 },
-  greece:         { latitude: 39.07, longitude: 21.82 },
-  portugal:       { latitude: 39.4, longitude: -8.22 },
-  mexico:         { latitude: 23.63, longitude: -102.55 },
-  brazil:         { latitude: -14.24, longitude: -51.93 },
-  india:          { latitude: 20.59, longitude: 78.96 },
-  vietnam:        { latitude: 14.06, longitude: 108.28 },
-  'united kingdom': { latitude: 55.38, longitude: -3.44 },
-  germany:        { latitude: 51.17, longitude: 10.45 },
-  canada:         { latitude: 56.13, longitude: -106.35 },
-  'south africa': { latitude: -30.56, longitude: 22.94 },
-  morocco:        { latitude: 31.79, longitude: -7.09 },
-  egypt:          { latitude: 26.82, longitude: 30.8 },
-  'new zealand':  { latitude: -40.9, longitude: 174.89 },
-  norway:         { latitude: 60.47, longitude: 8.47 },
-  sweden:         { latitude: 60.13, longitude: 18.64 },
-};
-
-function getCoordsForDestination(dest: string): { latitude: number; longitude: number } | null {
-  const d = dest.toLowerCase();
-  for (const [key, coords] of Object.entries(COUNTRY_COORDS)) {
-    if (d.includes(key)) return coords;
-  }
-  return null;
-}
-
 // ─── Region gradient helper ────────────────────────────────────────────────────
 
 function getProfileGradient(trips: Trip[]): [string, string, string] {
@@ -395,7 +358,7 @@ export default function ProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, username: authUsername } = useAuth();
   const { t, interpolate } = useLanguage();
 
   // Profile data
@@ -482,7 +445,8 @@ export default function ProfileScreen() {
   // Fallback: device_id matches (covers expired sessions or pre-auth profiles).
   const isOwnProfile =
     (isAuthenticated && profile !== null && user !== null && profile.user_id === user.id) ||
-    (profile !== null && !!deviceId && profile.device_id === deviceId);
+    (profile !== null && !!deviceId && profile.device_id === deviceId) ||
+    (isAuthenticated && !!authUsername && authUsername === username);
 
   // Member since formatting
   function formatMemberSince(dateStr: string | null | undefined): string {
@@ -506,20 +470,7 @@ export default function ProfileScreen() {
     return tripsArr.reduce((acc, t) => acc + (t.save_count ?? 0), 0);
   }
 
-  // Map markers from trips
-  function getMapMarkers(tripsArr: Trip[]): { latitude: number; longitude: number; key: string }[] {
-    const markers: { latitude: number; longitude: number; key: string }[] = [];
-    const seen = new Set<string>();
-    tripsArr.forEach((t) => {
-      const dest = t.itinerary?.destination ?? t.title ?? '';
-      const coords = getCoordsForDestination(dest);
-      if (coords && !seen.has(`${coords.latitude},${coords.longitude}`)) {
-        seen.add(`${coords.latitude},${coords.longitude}`);
-        markers.push({ ...coords, key: t.id });
-      }
-    });
-    return markers;
-  }
+
 
   useEffect(() => {
     getOrCreateDeviceId().then(setDeviceId);
@@ -555,7 +506,14 @@ export default function ProfileScreen() {
       // ── Auto-populate from trips (own profile, first time only) ──────────────
       const ownProfile =
         (isAuthenticated && user !== null && profileRes.data?.user_id === user.id) ||
-        (!!deviceId && profileRes.data?.device_id === deviceId);
+        (!!deviceId && profileRes.data?.device_id === deviceId) ||
+        (isAuthenticated && !!authUsername && authUsername === username);
+
+      // Backfill user_id if missing (covers profiles created before account linking)
+      if (ownProfile && isAuthenticated && user && profileRes.data && !profileRes.data.user_id && deviceId) {
+        supabase.from('profiles').update({ user_id: user.id }).eq('device_id', deviceId).then(() => {});
+      }
+
       if (ownProfile && profileVisited.length === 0 && fetchedTrips.length > 0) {
         try {
           const seen = await AsyncStorage.getItem(AUTO_POPULATE_KEY);
@@ -744,7 +702,7 @@ export default function ProfileScreen() {
   const createdAt = profile?.created_at ?? null;
   const countryFlag = getCountryFlag(homeCountry);
   const gradientColors = getProfileGradient(trips);
-  const mapMarkers = getMapMarkers(trips);
+
   const uniqueCountries = countUniqueCountries(trips);
 
   function applySort(arr: Trip[]): Trip[] {
@@ -1167,32 +1125,6 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        {/* ── WORLD MAP ── */}
-        {mapMarkers.length > 0 && (
-          <View style={{ marginTop: 16, paddingHorizontal: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 }}>
-                {t.profile.worldMap}
-              </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
-                · {uniqueCountries} {uniqueCountries === 1 ? t.profile.country : t.profile.countries2}
-              </Text>
-            </View>
-            <MapView
-              style={{ width: '100%', height: 140, borderRadius: 12 }}
-              liteMode
-              mapType="hybrid"
-              scrollEnabled={false}
-              zoomEnabled={false}
-              rotateEnabled={false}
-              initialRegion={{ latitude: 20, longitude: 0, latitudeDelta: 100, longitudeDelta: 100 }}
-            >
-              {mapMarkers.map((marker) => (
-                <Marker key={marker.key} coordinate={{ latitude: marker.latitude, longitude: marker.longitude }} pinColor={TEAL} />
-              ))}
-            </MapView>
-          </View>
-        )}
 
         {/* ── TRIP TABS ── */}
         <View style={{ marginTop: 24 }}>

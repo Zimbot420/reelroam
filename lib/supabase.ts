@@ -185,13 +185,12 @@ export async function isUsernameAvailable(username: string, deviceId: string): P
   return data === null || data.device_id === deviceId;
 }
 
-export async function upsertProfile(deviceId: string, username: string, avatarEmoji: string) {
+export async function upsertProfile(deviceId: string, username: string, avatarEmoji: string, userId?: string) {
+  const data: Record<string, any> = { device_id: deviceId, username, avatar_emoji: avatarEmoji };
+  if (userId) data.user_id = userId;
   const { error } = await supabase
     .from('profiles')
-    .upsert(
-      { device_id: deviceId, username, avatar_emoji: avatarEmoji },
-      { onConflict: 'device_id' },
-    );
+    .upsert(data, { onConflict: 'device_id' });
   if (error) throw error;
 }
 
