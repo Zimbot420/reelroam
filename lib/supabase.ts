@@ -158,6 +158,74 @@ export async function hasSavedTrip(tripId: string, deviceId: string): Promise<bo
   return data !== null;
 }
 
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+export interface TripComment {
+  id: string;
+  created_at: string;
+  trip_id: string;
+  device_id: string;
+  user_id: string | null;
+  username: string | null;
+  avatar_emoji: string | null;
+  content: string;
+  is_edited: boolean;
+}
+
+export async function getComments(tripId: string): Promise<TripComment[]> {
+  const { data, error } = await supabase
+    .from('trip_comments')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as TripComment[];
+}
+
+export async function addComment(
+  tripId: string,
+  deviceId: string,
+  content: string,
+  userId?: string,
+  username?: string,
+  avatarEmoji?: string,
+): Promise<TripComment> {
+  const { data, error } = await supabase
+    .from('trip_comments')
+    .insert({
+      trip_id: tripId,
+      device_id: deviceId,
+      user_id: userId ?? null,
+      username: username ?? null,
+      avatar_emoji: avatarEmoji ?? null,
+      content: content.trim(),
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  await supabase.rpc('increment_comment_count', { trip_id_arg: tripId }).catch(() => {});
+  notifyTripOwner(tripId, 'comment_added', 'New comment on your trip!', content.trim().slice(0, 80), { trip_id: tripId }).catch(() => {});
+  return data as TripComment;
+}
+
+export async function deleteComment(commentId: string, deviceId: string, tripId: string) {
+  const { error } = await supabase
+    .from('trip_comments')
+    .delete()
+    .eq('id', commentId)
+    .eq('device_id', deviceId);
+  if (error) throw error;
+  await supabase.rpc('decrement_comment_count', { trip_id_arg: tripId }).catch(() => {});
+}
+
+export async function getCommentCount(tripId: string): Promise<number> {
+  const { count } = await supabase
+    .from('trip_comments')
+    .select('*', { count: 'exact', head: true })
+    .eq('trip_id', tripId);
+  return count ?? 0;
+}
+
 // ─── Feed publishing ─────────────────────────────────────────────────────────
 
 export async function publishTrip(tripId: string, username: string, avatarEmoji: string) {

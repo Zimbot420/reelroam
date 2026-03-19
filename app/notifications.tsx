@@ -44,6 +44,7 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string; bg: string }> =
   trip_saved:   { icon: 'bookmark',         color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
   badge_earned: { icon: 'ribbon',           color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
   trip_liked:   { icon: 'heart',            color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+  comment_added:{ icon: 'chatbubble',       color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
   milestone:    { icon: 'star',             color: TEAL,      bg: 'rgba(13,148,136,0.15)' },
   weekly_recap: { icon: 'calendar-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)' },
 };
@@ -254,6 +255,9 @@ export default function NotificationsScreen() {
       case 'trip_liked':
       case 'milestone':
         if (d.trip_id) router.push(`/trip/${d.trip_id}` as any);
+        break;
+      case 'comment_added':
+        if (d.trip_id) router.push({ pathname: '/trip/[slug]', params: { slug: d.trip_id, openComments: '1' } } as any);
         break;
       case 'badge_earned':
         if (d.username) router.push(`/profile/${d.username}` as any);

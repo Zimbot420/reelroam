@@ -354,6 +354,20 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
           </Text>
         </TouchableOpacity>
 
+        {/* Comment */}
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            if (trip.share_slug) router.push({ pathname: '/trip/[slug]', params: { slug: trip.share_slug, openComments: '1' } });
+          }}
+          style={{ alignItems: 'center', gap: 4 }}
+        >
+          <Ionicons name="chatbubble-outline" size={24} color="rgba(255,255,255,0.9)" />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
+            {(trip.comment_count ?? 0) >= 1000 ? `${((trip.comment_count ?? 0) / 1000).toFixed(1)}k` : (trip.comment_count ?? 0)}
+          </Text>
+        </TouchableOpacity>
+
         {/* Share */}
         <TouchableOpacity onPress={handleShare} style={{ alignItems: 'center', gap: 4 }}>
           <Ionicons name="paper-plane-outline" size={24} color="rgba(255,255,255,0.9)" />

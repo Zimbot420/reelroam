@@ -160,6 +160,7 @@ export type NotificationType =
   | 'trip_saved'
   | 'badge_earned'
   | 'trip_liked'
+  | 'comment_added'
   | 'milestone'
   | 'weekly_recap';
 

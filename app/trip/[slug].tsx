@@ -40,6 +40,7 @@ import { checkAndAwardBadges } from '../../lib/badges';
 import { Badge } from '../../types';
 import ShareToFeedModal from '../../components/ShareToFeedModal';
 import BadgeCelebrationModal from '../../components/BadgeCelebrationModal';
+import CommentsSheet from '../../components/CommentsSheet';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,7 @@ interface TripRow {
   user_avatar_emoji?: string;
   device_id?: string;
   user_id?: string | null;
+  comment_count?: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -421,7 +423,7 @@ function ActivityCard({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function TripDetailScreen() {
-  const { slug } = useLocalSearchParams<{ slug: string }>();
+  const { slug, openComments } = useLocalSearchParams<{ slug: string; openComments?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -442,6 +444,15 @@ export default function TripDetailScreen() {
   const [celebrationBadge, setCelebrationBadge] = useState<Badge | null>(null);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
   const newBadgeQueueRef = useRef<Badge[]>([]);
+
+  // Comments state
+  const [showComments, setShowComments] = useState(false);
+  const [commentCount, setCommentCount] = useState(0);
+
+  // Auto-open comments when navigating from feed comment button
+  useEffect(() => {
+    if (openComments === '1' && trip && !loading) setShowComments(true);
+  }, [openComments, trip, loading]);
 
   // Quick-edit state
   const [quickEditActivity, setQuickEditActivity] = useState<ItineraryActivity | null>(null);
@@ -563,6 +574,7 @@ export default function TripDetailScreen() {
         // Online — update state and write to cache for future offline use
         setTrip(data as TripRow);
         setIsPublic(data.is_public ?? false);
+        setCommentCount((data as any).comment_count ?? 0);
         setIsOffline(false);
         supabase.from('trip_views').insert({ trip_id: data.id }).then(() => {});
         cacheTripDetail(data as Record<string, unknown>); // fire-and-forget
@@ -1184,17 +1196,27 @@ export default function TripDetailScreen() {
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Secondary row: Share + Bucket List */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 24, paddingVertical: 4 }}>
+        {/* Secondary row: Comments + Share + Bucket List */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 20, paddingVertical: 4 }}>
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowComments(true); }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 10, minHeight: 44 }}
+          >
+            <Ionicons name="chatbubble-outline" size={16} color="#6366f1" />
+            <Text style={{ fontSize: 14, color: '#6366f1', fontWeight: '500' }}>
+              {commentCount > 0 ? `${commentCount}` : 'Comment'}
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity onPress={handleShare} style={{ paddingVertical: 10, minHeight: 44, justifyContent: 'center' }}>
             <Text style={{ fontSize: 14, color: TEAL, textDecorationLine: 'underline', fontWeight: '500' }}>
-              Share Trip
+              Share
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={handleToggleSave}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, minHeight: 44 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 10, minHeight: 44 }}
           >
             <Ionicons
               name={isSaved ? 'bookmark' : 'bookmark-outline'}
@@ -1202,7 +1224,7 @@ export default function TripDetailScreen() {
               color={isSaved ? TEAL : '#9CA3AF'}
             />
             <Text style={{ fontSize: 14, color: isSaved ? TEAL : '#9CA3AF', fontWeight: '500' }}>
-              {isSaved ? 'Saved' : 'Bucket List'}
+              {isSaved ? 'Saved' : 'Save'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1368,6 +1390,16 @@ export default function TripDetailScreen() {
           </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
+
+      {/* Comments sheet */}
+      {trip && (
+        <CommentsSheet
+          visible={showComments}
+          tripId={trip.id}
+          onClose={() => setShowComments(false)}
+          onCommentCountChange={setCommentCount}
+        />
+      )}
     </View>
   );
 }

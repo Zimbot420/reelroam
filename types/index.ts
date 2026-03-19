@@ -88,6 +88,7 @@ export interface Trip {
   is_public?: boolean;
   like_count?: number;
   save_count?: number;
+  comment_count?: number;
   username?: string;
   user_avatar_emoji?: string;
   // Past trip fields
