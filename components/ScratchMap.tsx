@@ -324,14 +324,6 @@ export default function ScratchMap({
         </Reanimated.View>
       </GestureDetector>
 
-      {!hasEverTapped && visitedCodes.length === 0 && (
-        <View pointerEvents="none" style={{ position: 'absolute', bottom: 8, alignSelf: 'center' }}>
-          <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, letterSpacing: 0.3 }}>
-            Tap countries you've visited
-          </Text>
-        </View>
-      )}
-
       {isZoomed && (
         <TouchableOpacity
           onPress={resetZoom}

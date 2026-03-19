@@ -595,7 +595,8 @@ export default function ProfileScreen() {
   // ── Scratch map toggle ────────────────────────────────────────────────────────
   const handleToggleCountry = useCallback(
     async (isoCode: string, nowVisited: boolean) => {
-      if (!profile?.id) return;
+      // Need at least one way to identify the profile row
+      if (!profile?.id && !deviceId && !username) return;
 
       // 1. Optimistic update
       let updatedCodes: string[];
@@ -610,11 +611,16 @@ export default function ProfileScreen() {
       await new Promise<void>((r) => setTimeout(r, 0));
 
       try {
-        // 2. Persist to Supabase
-        const { error } = await supabase
-          .from('profiles')
-          .update({ visited_countries: updatedCodes! })
-          .eq('id', profile.id);
+        // 2. Persist to Supabase — use best available identifier
+        let query = supabase.from('profiles').update({ visited_countries: updatedCodes! });
+        if (profile?.id) {
+          query = query.eq('id', profile.id);
+        } else if (deviceId) {
+          query = query.eq('device_id', deviceId);
+        } else {
+          query = query.eq('username', username);
+        }
+        const { error } = await query;
 
         if (error) throw error;
 
@@ -642,20 +648,21 @@ export default function ProfileScreen() {
 
   // ── Remove all visited countries ─────────────────────────────────────────────
   const handleRemoveAll = useCallback(async () => {
-    if (!profile?.id) return;
+    if (!profile?.id && !deviceId && !username) return;
     const prev = visitedCodes;
     setVisitedCodes([]);
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ visited_countries: [] })
-        .eq('id', profile.id);
+      let query = supabase.from('profiles').update({ visited_countries: [] });
+      if (profile?.id) query = query.eq('id', profile.id);
+      else if (deviceId) query = query.eq('device_id', deviceId);
+      else query = query.eq('username', username);
+      const { error } = await query;
       if (error) throw error;
     } catch {
       setVisitedCodes(prev);
       showSaveError();
     }
-  }, [profile?.id, visitedCodes, showSaveError]);
+  }, [profile?.id, deviceId, username, visitedCodes, showSaveError]);
 
   // ── Auto-populate confirm ─────────────────────────────────────────────────────
   const handleAutoPopulateConfirm = useCallback(async () => {
