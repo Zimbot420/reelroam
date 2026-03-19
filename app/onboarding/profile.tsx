@@ -151,7 +151,7 @@ export default function ProfileScreen() {
         username: username.trim(),
         display_name: displayName.trim(),
         bio: bio.trim(),
-        avatar_emoji: avatarUri ? null : selectedEmoji,
+        avatar_emoji: selectedEmoji || '🌍',
       };
 
       if (user?.id) {
@@ -170,7 +170,7 @@ export default function ProfileScreen() {
           if (uploadError) throw uploadError;
           const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(uploadPath);
           profileData.avatar_url = urlData.publicUrl;
-          profileData.avatar_emoji = null;
+          // Keep emoji as fallback even when photo is uploaded (DB requires non-null)
         } catch {
           // Upload failed — keep emoji, don't store a broken local URI
           profileData.avatar_emoji = selectedEmoji;

@@ -705,7 +705,7 @@ export default function EditProfile() {
         username: username.trim() || undefined,
         bio: bio.trim(),
         home_country: homeCountry || null,
-        avatar_emoji: finalAvatarUrl ? null : avatarEmoji,
+        avatar_emoji: avatarEmoji || '🌍',
         avatar_url: finalAvatarUrl || null,
         cover_photo_url: finalCoverUrl || null,
         travel_style: travelStyle,
