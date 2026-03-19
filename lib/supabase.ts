@@ -224,6 +224,58 @@ export async function getCommentCount(tripId: string): Promise<number> {
   return count ?? 0;
 }
 
+// ─── Follows ──────────────────────────────────────────────────────────────────
+
+export async function followUser(deviceId: string, targetUsername: string, userId?: string) {
+  const { error } = await supabase
+    .from('follows')
+    .insert({ follower_device_id: deviceId, follower_user_id: userId ?? null, following_username: targetUsername });
+  if (error) throw error;
+}
+
+export async function unfollowUser(deviceId: string, targetUsername: string) {
+  const { error } = await supabase
+    .from('follows')
+    .delete()
+    .eq('follower_device_id', deviceId)
+    .eq('following_username', targetUsername);
+  if (error) throw error;
+}
+
+export async function isFollowing(deviceId: string, targetUsername: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('follows')
+    .select('id')
+    .eq('follower_device_id', deviceId)
+    .eq('following_username', targetUsername)
+    .maybeSingle();
+  return data !== null;
+}
+
+export async function getFollowerCount(username: string): Promise<number> {
+  const { count } = await supabase
+    .from('follows')
+    .select('*', { count: 'exact', head: true })
+    .eq('following_username', username);
+  return count ?? 0;
+}
+
+export async function getFollowingCount(deviceId: string): Promise<number> {
+  const { count } = await supabase
+    .from('follows')
+    .select('*', { count: 'exact', head: true })
+    .eq('follower_device_id', deviceId);
+  return count ?? 0;
+}
+
+export async function getFollowingUsernames(deviceId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('follows')
+    .select('following_username')
+    .eq('follower_device_id', deviceId);
+  return (data ?? []).map((r: any) => r.following_username);
+}
+
 // ─── Feed publishing ─────────────────────────────────────────────────────────
 
 export async function publishTrip(tripId: string, username: string, avatarEmoji: string) {

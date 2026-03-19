@@ -19,7 +19,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
-import { supabase } from '../../lib/supabase';
+import { supabase, followUser, unfollowUser, isFollowing, getFollowerCount, getFollowingCount } from '../../lib/supabase';
 import { useAuth } from '../../lib/context/AuthContext';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
 import { Badge, Trip } from '../../types';
@@ -399,6 +399,12 @@ export default function ProfileScreen() {
   const [saveErrorVisible, setSaveErrorVisible] = useState(false);
   const saveErrorAnim = useRef(new Animated.Value(0)).current;
 
+  // Follow state
+  const [following, setFollowing] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [followLoading, setFollowLoading] = useState(false);
+
   // Badge state
   const [displayBadges, setDisplayBadgesState] = useState<(Badge & { earned_at?: string })[]>([]);
   const [allEarnedBadges, setAllEarnedBadges] = useState<(Badge & { earned_at?: string })[]>([]);
@@ -475,6 +481,48 @@ export default function ProfileScreen() {
   useEffect(() => {
     getOrCreateDeviceId().then(setDeviceId);
   }, []);
+
+  // Load follow state when profile + deviceId are ready
+  useEffect(() => {
+    if (!username) return;
+    getFollowerCount(username as string).then(setFollowerCount).catch(() => {});
+    if (deviceId) {
+      isFollowing(deviceId, username as string).then(setFollowing).catch(() => {});
+      getFollowingCount(deviceId).then(setFollowingCount).catch(() => {});
+    }
+  }, [username, deviceId]);
+
+  async function handleToggleFollow() {
+    if (!deviceId || !username || isOwnProfile) return;
+    setFollowLoading(true);
+    const wasFollowing = following;
+    // Optimistic update
+    setFollowing(!wasFollowing);
+    setFollowerCount((c) => wasFollowing ? Math.max(c - 1, 0) : c + 1);
+    try {
+      if (wasFollowing) {
+        await unfollowUser(deviceId, username as string);
+      } else {
+        await followUser(deviceId, username as string, user?.id);
+        // Notify the user being followed (fire-and-forget)
+        if (profile?.user_id) {
+          supabase.from('notifications').insert({
+            user_id: profile.user_id,
+            type: 'user_followed',
+            title: 'New follower!',
+            body: `${authUsername ?? 'Someone'} started following you`,
+            data: { username: authUsername },
+          }).then(() => {}).catch(() => {});
+        }
+      }
+    } catch {
+      // Revert
+      setFollowing(wasFollowing);
+      setFollowerCount((c) => wasFollowing ? c + 1 : Math.max(c - 1, 0));
+    } finally {
+      setFollowLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!username) return;
@@ -943,16 +991,21 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
-                onPress={() => Alert.alert('Coming Soon', 'Follow feature is coming in a future update.')}
+                onPress={handleToggleFollow}
+                disabled={followLoading}
                 style={{
                   borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.5)',
+                  borderColor: following ? 'rgba(255,255,255,0.2)' : TEAL,
+                  backgroundColor: following ? 'rgba(255,255,255,0.08)' : TEAL,
                   borderRadius: 18,
-                  paddingHorizontal: 14,
+                  paddingHorizontal: 16,
                   paddingVertical: 7,
+                  opacity: followLoading ? 0.6 : 1,
                 }}
               >
-                <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>{t.profile.follow}</Text>
+                <Text style={{ color: 'white', fontSize: 13, fontWeight: '600' }}>
+                  {following ? 'Following' : t.profile.follow}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1084,6 +1137,22 @@ export default function ProfileScreen() {
               {bio}
             </Text>
           ) : null}
+
+          {/* Followers / Following */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>{followerCount}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                {followerCount === 1 ? 'follower' : 'followers'}
+              </Text>
+            </View>
+            {isOwnProfile && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>{followingCount}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>following</Text>
+              </View>
+            )}
+          </View>
 
           {/* Home country + member since on one line */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 }}>

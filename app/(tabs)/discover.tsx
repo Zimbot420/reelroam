@@ -16,14 +16,14 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import FeedTripCard, { FeedTripCardSkeleton } from '../../components/FeedTripCard';
-import { getPublicFeedTrips } from '../../lib/supabase';
+import { getPublicFeedTrips, getFollowingUsernames } from '../../lib/supabase';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
 import { Trip } from '../../types';
 import { useLanguage } from '../../lib/context/LanguageContext';
 
 // ─── Category detection ───────────────────────────────────────────────────────
 
-const CATEGORY_IDS = ['all', 'beach', 'city', 'nature', 'food', 'culture', 'budget'] as const;
+const CATEGORY_IDS = ['all', 'following', 'beach', 'city', 'nature', 'food', 'culture', 'budget'] as const;
 type CategoryId = typeof CATEGORY_IDS[number];
 
 function detectCategory(trip: Trip): string {
@@ -80,6 +80,7 @@ export default function DiscoverScreen() {
   const [deviceId, setDeviceId] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
+  const [followingUsernames, setFollowingUsernames] = useState<string[]>([]);
   const pageRef = useRef(0);
   const fetchedAllRef = useRef(false);
 
@@ -90,14 +91,19 @@ export default function DiscoverScreen() {
   }, []);
 
   useEffect(() => {
-    getOrCreateDeviceId().then(setDeviceId);
+    getOrCreateDeviceId().then((did) => {
+      setDeviceId(did);
+      getFollowingUsernames(did).then(setFollowingUsernames).catch(() => {});
+    });
     loadInitial();
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       setSavedKey((k) => k + 1);
-    }, [])
+      // Refresh following list so new follows appear in the "Following" tab
+      if (deviceId) getFollowingUsernames(deviceId).then(setFollowingUsernames).catch(() => {});
+    }, [deviceId])
   );
 
   async function loadInitial() {
@@ -160,8 +166,11 @@ export default function DiscoverScreen() {
 
   const filteredTrips = useMemo(() => {
     if (activeCategory === 'all') return allTrips;
+    if (activeCategory === 'following') {
+      return allTrips.filter((t) => t.username && followingUsernames.includes(t.username));
+    }
     return allTrips.filter((t) => detectCategory(t) === activeCategory);
-  }, [allTrips, activeCategory]);
+  }, [allTrips, activeCategory, followingUsernames]);
 
   const renderItem = useCallback(({ item, index }: { item: Trip; index: number }) => (
     <MemoCard

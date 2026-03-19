@@ -19,7 +19,9 @@ import {
   supabase,
   likeTrip, unlikeTrip, hasLikedTrip,
   saveTrip, unsaveTrip, hasSavedTrip,
+  isFollowing, followUser, unfollowUser,
 } from '../lib/supabase';
+import { useAuth } from '../lib/context/AuthContext';
 import { useLanguage } from '../lib/context/LanguageContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -144,6 +146,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { t } = useLanguage();
+  const { username: authUsername } = useAuth();
   const itinerary = trip.itinerary;
   const destination = itinerary?.destination ?? trip.title ?? 'Unknown destination';
   const totalDays = itinerary?.totalDays ?? 0;
@@ -157,6 +160,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
   const [likeCount, setLikeCount] = useState(trip.like_count ?? 0);
   const [saveCount, setSaveCount] = useState(trip.save_count ?? 0);
   const [commentCount, setCommentCount] = useState(trip.comment_count ?? 0);
+  const [isFollowingCreator, setIsFollowingCreator] = useState(false);
   const heartScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const iconAnim = useRef(new Animated.Value(0)).current;
@@ -178,6 +182,10 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
     supabase.from('trip_comments').select('*', { count: 'exact', head: true }).eq('trip_id', trip.id)
       .then(({ count }) => { if (count !== null) setCommentCount(count); })
       .catch(() => {});
+    // Check follow status for creator
+    if (trip.username && trip.username !== authUsername) {
+      isFollowing(deviceId, trip.username).then(setIsFollowingCreator).catch(() => {});
+    }
   }, [trip.id, deviceId, savedKey]);
 
   // Auto-playing slideshow — only runs when this card is visible on screen
@@ -396,26 +404,45 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
           paddingBottom: 32,
         }}
       >
-        {/* Username row */}
+        {/* Username row + follow */}
         {trip.username && (
-          <TouchableOpacity
-            onPress={() => {
-              if (trip.username) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push(('/profile/' + trip.username) as any);
-              }
-            }}
-            activeOpacity={trip.username ? 0.7 : 1}
-            style={{
-              flexDirection: 'row', alignItems: 'center', gap: 6,
-              marginBottom: 10, alignSelf: 'flex-start',
-            }}
-          >
-            <Text style={{ fontSize: 20, lineHeight: 24 }}>{trip.user_avatar_emoji ?? '🌍'}</Text>
-            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: '400', letterSpacing: 0.2 }}>
-              @{trip.username}
-            </Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => {
+                if (trip.username) {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(('/profile/' + trip.username) as any);
+                }
+              }}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            >
+              <Text style={{ fontSize: 20, lineHeight: 24 }}>{trip.user_avatar_emoji ?? '🌍'}</Text>
+              <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', fontWeight: '400', letterSpacing: 0.2 }}>
+                @{trip.username}
+              </Text>
+            </TouchableOpacity>
+            {trip.username !== authUsername && !isFollowingCreator && (
+              <TouchableOpacity
+                onPress={async () => {
+                  if (!deviceId || !trip.username) return;
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setIsFollowingCreator(true);
+                  try { await followUser(deviceId, trip.username); } catch { setIsFollowingCreator(false); }
+                }}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 3,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
+                }}
+              >
+                <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>Follow</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
 
         {/* Trip title — large and commanding; shared element to trip detail */}
