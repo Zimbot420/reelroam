@@ -122,7 +122,6 @@ export default function RootLayout() {
               <Stack.Screen name="notifications"     options={{}} />
               <Stack.Screen name="search"            options={{}} />
               <Stack.Screen name="messages"           options={{}} />
-              <Stack.Screen name="messages/[conversationId]" options={{}} />
               <Stack.Screen name="onboarding"        options={{}} />
               <Stack.Screen name="auth"              options={{}} />
               <Stack.Screen name="past-trip"         options={{ presentation: 'fullScreenModal' }} />
