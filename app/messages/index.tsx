@@ -17,9 +17,9 @@ import {
   getMutualFollows,
   getOrCreateConversation,
   ConversationPreview,
-} from '../lib/supabase';
-import { useAuth } from '../lib/context/AuthContext';
-import { getOrCreateDeviceId } from '../lib/deviceId';
+} from '../../lib/supabase';
+import { useAuth } from '../../lib/context/AuthContext';
+import { getOrCreateDeviceId } from '../../lib/deviceId';
 
 const TEAL = '#0D9488';
 const BG = '#0a0a1a';
