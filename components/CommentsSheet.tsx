@@ -168,16 +168,20 @@ export default function CommentsSheet({
 
     setPosting(true);
     try {
+      // Ensure deviceId is loaded
+      const did = deviceId || await getOrCreateDeviceId();
+      if (!did) throw new Error('Could not identify device');
+
       // Fetch profile info for the comment
       const { data: profile } = await supabase
         .from('profiles')
         .select('username, avatar_emoji')
-        .eq('device_id', deviceId)
+        .eq('device_id', did)
         .maybeSingle();
 
       const newComment = await addComment(
         tripId,
-        deviceId,
+        did,
         trimmed,
         user?.id,
         profile?.username ?? authUsername ?? undefined,
@@ -191,8 +195,8 @@ export default function CommentsSheet({
 
       // Scroll to bottom
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
-    } catch {
-      Alert.alert('Error', 'Could not post comment. Please try again.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not post comment. Please try again.');
     } finally {
       setPosting(false);
     }

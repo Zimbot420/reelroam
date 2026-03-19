@@ -27,3 +27,10 @@ CREATE OR REPLACE FUNCTION decrement_comment_count(trip_id_arg UUID)
 RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
   UPDATE trips SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = trip_id_arg;
 $$;
+
+-- RLS policies
+ALTER TABLE trip_comments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "comments_read"   ON trip_comments FOR SELECT USING (true);
+CREATE POLICY "comments_insert" ON trip_comments FOR INSERT WITH CHECK (true);
+CREATE POLICY "comments_delete" ON trip_comments FOR DELETE USING (true);
