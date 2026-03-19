@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
 // Does NOT force unauthenticated users to log in — the app supports guest use.
 
 function NavigationGuard() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, needsOnboarding } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -56,12 +56,20 @@ function NavigationGuard() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === 'auth';
+    const inOnboarding = segments[0] === 'onboarding';
 
     // If already signed in, bounce away from auth screens to home
     if (isAuthenticated && inAuthGroup) {
       router.replace('/(tabs)' as any);
+      return;
     }
-  }, [isAuthenticated, isLoading, segments]);
+
+    // If signed in but no profile, redirect to profile setup
+    // (skip welcome/signup since they're already authenticated)
+    if (needsOnboarding && !inOnboarding && !inAuthGroup) {
+      router.replace('/onboarding/profile' as any);
+    }
+  }, [isAuthenticated, isLoading, needsOnboarding, segments]);
 
   return null;
 }

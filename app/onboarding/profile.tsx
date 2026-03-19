@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/context/AuthContext';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
+import * as Haptics from 'expo-haptics';
 
 const TEAL = '#0D9488';
 const BG = '#0a0a1a';
@@ -54,7 +55,7 @@ function toUsernameSlug(name: string) {
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, isAuthenticated, refreshUsername } = useAuth();
 
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
@@ -182,6 +183,9 @@ export default function ProfileScreen() {
 
       if (upsertError) throw upsertError;
 
+      // Update AuthContext so the guard knows profile exists
+      await refreshUsername();
+
       router.push('/onboarding/migrate');
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save profile. Please try again.');
@@ -190,8 +194,40 @@ export default function ProfileScreen() {
     }
   }
 
-  function handleSkip() {
-    router.push('/onboarding/migrate');
+  async function handleSkip() {
+    // Create a minimal profile with an auto-generated username so the user
+    // isn't stuck in a broken state (authenticated but no profile).
+    try {
+      setSaving(true);
+      const deviceId = await getOrCreateDeviceId();
+      const randomSuffix = Math.random().toString(36).slice(2, 8);
+      const autoUsername = `traveler_${randomSuffix}`;
+
+      const profileData: Record<string, any> = {
+        device_id: deviceId,
+        username: autoUsername,
+        display_name: 'Traveler',
+        avatar_emoji: '🌍',
+      };
+
+      if (user?.id) {
+        profileData.user_id = user.id;
+      }
+
+      await supabase
+        .from('profiles')
+        .upsert(profileData, { onConflict: 'device_id' });
+
+      // Update AuthContext so the guard knows profile exists
+      await refreshUsername();
+
+      router.push('/onboarding/migrate');
+    } catch {
+      // Even on error, let them proceed
+      router.push('/onboarding/migrate');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -212,20 +248,25 @@ export default function ProfileScreen() {
         >
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 28 }}>
-            <TouchableOpacity
-              onPress={() => router.back()}
-              activeOpacity={0.7}
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 12,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="arrow-back" size={20} color="white" />
-            </TouchableOpacity>
+            {/* Hide back button when user was redirected here by the onboarding guard */}
+            {isAuthenticated ? (
+              <View style={{ width: 40 }} />
+            ) : (
+              <TouchableOpacity
+                onPress={() => router.back()}
+                activeOpacity={0.7}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="arrow-back" size={20} color="white" />
+              </TouchableOpacity>
+            )}
             <View style={{ flex: 1, alignItems: 'center' }}>
               <ProgressDots current={4} total={5} />
             </View>

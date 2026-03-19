@@ -8,6 +8,10 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   username: string | null;
+  /** True when user is signed in but has no profile (username) yet */
+  needsOnboarding: boolean;
+  /** Re-fetch username from profiles — call after profile creation */
+  refreshUsername: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -16,6 +20,8 @@ const AuthContext = createContext<AuthContextValue>({
   isLoading: true,
   isAuthenticated: false,
   username: null,
+  needsOnboarding: false,
+  refreshUsername: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -24,6 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [username, setUsername] = useState<string | null>(null);
 
+  // Track whether we've finished the initial username lookup
+  const [usernameFetched, setUsernameFetched] = useState(false);
+
   async function fetchUsername(userId: string) {
     const { data } = await supabase
       .from('profiles')
@@ -31,6 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('user_id', userId)
       .maybeSingle();
     setUsername(data?.username ?? null);
+    setUsernameFetched(true);
+  }
+
+  async function refreshUsername() {
+    if (user) await fetchUsername(user.id);
   }
 
   useEffect(() => {
@@ -48,14 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null);
       setIsLoading(false);
       if (session?.user) fetchUsername(session.user.id);
-      else setUsername(null);
+      else { setUsername(null); setUsernameFetched(false); }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  const needsOnboarding = !!user && usernameFetched && username === null;
+
   return (
-    <AuthContext.Provider value={{ user, session, isLoading, isAuthenticated: !!user, username }}>
+    <AuthContext.Provider value={{ user, session, isLoading, isAuthenticated: !!user, username, needsOnboarding, refreshUsername }}>
       {children}
     </AuthContext.Provider>
   );

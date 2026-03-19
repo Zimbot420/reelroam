@@ -47,7 +47,7 @@ export default function SignupScreen() {
       setError('');
       setLoadingApple(true);
       await signInWithApple();
-      router.push('/onboarding/profile');
+      router.replace('/onboarding/profile');
     } catch (e: any) {
       if (e?.code !== 'ERR_REQUEST_CANCELED') {
         setError(e?.message ?? 'Apple sign in failed. Please try again.');
@@ -63,7 +63,7 @@ export default function SignupScreen() {
       setLoadingGoogle(true);
       const result = await signInWithGoogle();
       if (result) {
-        router.push('/onboarding/profile');
+        router.replace('/onboarding/profile');
       }
     } catch (e: any) {
       setError(e?.message ?? 'Google sign in failed. Please try again.');

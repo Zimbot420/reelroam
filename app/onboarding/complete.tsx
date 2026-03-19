@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/context/AuthContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getOrCreateDeviceId } from '../../lib/deviceId';
 import SpinningGlobe from '../../components/SpinningGlobe';
 
@@ -93,7 +94,7 @@ const confettiDots = Array.from({ length: CONFETTI_COUNT }, (_, i) => ({
 export default function CompleteScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, refreshUsername } = useAuth();
 
   const [displayName, setDisplayName] = useState('');
   const [avatarEmoji, setAvatarEmoji] = useState('🌍');
@@ -116,6 +117,10 @@ export default function CompleteScreen() {
       } catch {
         // Use defaults
       }
+
+      // Mark onboarding as complete so the NavigationGuard stops redirecting
+      await refreshUsername();
+      await AsyncStorage.setItem('onboarding_completed', 'true');
     }
     loadProfile();
 
