@@ -262,10 +262,6 @@ export default function DiscoverScreen() {
           renderItem={renderItem}
           getItemLayout={getItemLayout}
           pagingEnabled
-          decelerationRate="fast"
-          snapToAlignment="start"
-          snapToInterval={cardHeight}
-          disableIntervalMomentum
           showsVerticalScrollIndicator={false}
           onEndReached={loadMore}
           onEndReachedThreshold={2}
