@@ -1,12 +1,12 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
-  FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -124,7 +124,9 @@ export default function ScratchMapFullscreen({
   const continents = countContinents(visitedCodes);
   const worldPct = calculateWorldPercentage(visitedCodes);
 
-  // Search results — filtered + sorted (visited first, then alpha)
+  // Search results — filtered + sorted alphabetically
+  // Intentionally NOT sorted by visited status to prevent the list from
+  // shifting when a country is toggled (which caused wrong-country taps)
   const searchResults = useMemo<CountryResult[]>(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
@@ -134,14 +136,15 @@ export default function ScratchMapFullscreen({
         results.push({ code, name: info.name, flag: info.flag });
       }
     }
+    // Exact prefix matches first, then alphabetical — stable order
     results.sort((a, b) => {
-      const aV = visitedSet.has(a.code) ? 0 : 1;
-      const bV = visitedSet.has(b.code) ? 0 : 1;
-      if (aV !== bV) return aV - bV;
+      const aPrefix = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bPrefix = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
       return a.name.localeCompare(b.name);
     });
     return results.slice(0, 8);
-  }, [query, visitedSet]);
+  }, [query]);
 
   const handleToggle = (code: string) => {
     if (!onToggleCountry) return;
@@ -282,27 +285,24 @@ export default function ScratchMapFullscreen({
 
             {/* Results list */}
             {searchResults.length > 0 && (
-              <View
+              <ScrollView
                 style={{
                   maxHeight: 220,
                   backgroundColor: '#12132a',
                   borderTopWidth: 1,
                   borderTopColor: 'rgba(255,255,255,0.06)',
                 }}
+                keyboardShouldPersistTaps="handled"
               >
-                <FlatList
-                  data={searchResults}
-                  keyExtractor={item => item.code}
-                  keyboardShouldPersistTaps="handled"
-                  renderItem={({ item }) => (
-                    <CountryRow
-                      item={item}
-                      isVisited={visitedSet.has(item.code)}
-                      onToggle={() => handleToggle(item.code)}
-                    />
-                  )}
-                />
-              </View>
+                {searchResults.map((item) => (
+                  <CountryRow
+                    key={item.code}
+                    item={item}
+                    isVisited={visitedSet.has(item.code)}
+                    onToggle={() => handleToggle(item.code)}
+                  />
+                ))}
+              </ScrollView>
             )}
 
             {query.length > 0 && searchResults.length === 0 && (

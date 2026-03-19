@@ -747,7 +747,7 @@ export default function ProfileScreen() {
             <ScratchMap
               visitedCodes={visitedCodes}
               onToggleCountry={handleToggleCountry}
-              interactive
+              interactive={false}
               width={SCREEN_WIDTH}
               height={COVER_HEIGHT}
             />
@@ -800,7 +800,7 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          {/* "Tap to mark visited" hint — own profile */}
+          {/* "Expand to add countries" hint — own profile */}
           {isOwnProfile && visitedCodes.length === 0 && (
             <View
               pointerEvents="none"
@@ -823,9 +823,9 @@ export default function ProfileScreen() {
                   paddingVertical: 4,
                 }}
               >
-                <Ionicons name="pencil-outline" size={10} color="rgba(255,255,255,0.55)" />
+                <Ionicons name="expand-outline" size={10} color="rgba(255,255,255,0.55)" />
                 <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
-                  {t.profile.tapToMark}
+                  Expand to search & add countries
                 </Text>
               </View>
             </View>
