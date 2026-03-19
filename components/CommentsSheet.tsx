@@ -19,7 +19,6 @@ import * as Haptics from 'expo-haptics';
 import {
   supabase,
   getComments,
-  deleteComment,
   TripComment,
 } from '../lib/supabase';
 import { notifyTripOwner } from '../lib/notifications';
@@ -203,20 +202,25 @@ export default function CommentsSheet({
 
       // Comment posted — update UI immediately
       const newComment = inserted as TripComment;
-      setComments((prev) => [...prev, newComment]);
-      onCommentCountChange?.(comments.length + 1);
+      setComments((prev) => {
+        const updated = [...prev, newComment];
+        onCommentCountChange?.(updated.length);
+        return updated;
+      });
       setText('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
-
-      // Side effects — fire-and-forget, never show errors for these
-      try { await supabase.rpc('increment_comment_count', { trip_id_arg: tripId }); } catch {}
-      try { notifyTripOwner(tripId, 'comment_added', 'New comment on your trip!', trimmed.slice(0, 80), { trip_id: tripId }); } catch {}
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Could not post comment. Please try again.');
     } finally {
       setPosting(false);
     }
+
+    // Side effects — completely outside try/catch, never show errors
+    supabase.from('trips').select('comment_count').eq('id', tripId).single().then(({ data }) => {
+      if (data) supabase.from('trips').update({ comment_count: (data.comment_count ?? 0) + 1 }).eq('id', tripId);
+    }).catch(() => {});
+    try { notifyTripOwner(tripId, 'comment_added' as any, 'New comment on your trip!', trimmed.slice(0, 80), { trip_id: tripId }).catch(() => {}); } catch {}
   }
 
   function handleDelete(comment: TripComment) {
@@ -228,10 +232,26 @@ export default function CommentsSheet({
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteComment(comment.id, deviceId, tripId);
-            setComments((prev) => prev.filter((c) => c.id !== comment.id));
-            onCommentCountChange?.(Math.max(comments.length - 1, 0));
+            // Delete from DB — only critical call
+            const { error: delError } = await supabase
+              .from('trip_comments')
+              .delete()
+              .eq('id', comment.id)
+              .eq('device_id', deviceId || await getOrCreateDeviceId());
+            if (delError) throw delError;
+
+            // Update UI immediately
+            setComments((prev) => {
+              const updated = prev.filter((c) => c.id !== comment.id);
+              onCommentCountChange?.(updated.length);
+              return updated;
+            });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+            // Decrement count (best-effort)
+            supabase.from('trips').select('comment_count').eq('id', tripId).single().then(({ data }) => {
+              if (data) supabase.from('trips').update({ comment_count: Math.max((data.comment_count ?? 1) - 1, 0) }).eq('id', tripId);
+            }).catch(() => {});
           } catch {
             Alert.alert('Error', 'Could not delete comment.');
           }

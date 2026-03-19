@@ -574,8 +574,11 @@ export default function TripDetailScreen() {
         // Online — update state and write to cache for future offline use
         setTrip(data as TripRow);
         setIsPublic(data.is_public ?? false);
-        setCommentCount((data as any).comment_count ?? 0);
         setIsOffline(false);
+        // Fetch real comment count (trips.comment_count may be stale)
+        supabase.from('trip_comments').select('*', { count: 'exact', head: true }).eq('trip_id', data.id).then(({ count }) => {
+          setCommentCount(count ?? 0);
+        }).catch(() => setCommentCount((data as any).comment_count ?? 0));
         supabase.from('trip_views').insert({ trip_id: data.id }).then(() => {});
         cacheTripDetail(data as Record<string, unknown>); // fire-and-forget
       } else if (error?.code === 'PGRST116') {
