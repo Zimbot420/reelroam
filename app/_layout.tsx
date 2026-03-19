@@ -5,6 +5,7 @@ import { useEffect, Component } from 'react';
 import { ToastAndroid, Platform, Alert, View, Text, ScrollView } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { useShareIntent } from '../hooks/useShareIntent';
 import { initializePurchases } from '../lib/purchases';
@@ -74,6 +75,46 @@ function NavigationGuard() {
   return null;
 }
 
+function AuthDeepLinkHandler() {
+  const router = useRouter();
+
+  useEffect(() => {
+    // Handle initial URL (app opened via deep link)
+    Linking.getInitialURL().then((url) => {
+      if (url) handleAuthUrl(url);
+    });
+
+    // Handle URLs while app is running
+    const sub = Linking.addEventListener('url', ({ url }) => handleAuthUrl(url));
+    return () => sub.remove();
+  }, []);
+
+  function handleAuthUrl(url: string) {
+    try {
+      // Supabase auth emails redirect to: scrollaway://auth/confirm#access_token=...&refresh_token=...&type=signup
+      if (!url.includes('auth/confirm') && !url.includes('access_token') && !url.includes('token_hash')) return;
+
+      // Parse tokens from URL hash fragment or query params
+      const hashPart = url.split('#')[1] ?? '';
+      const queryPart = url.split('?')[1] ?? '';
+      const combined = hashPart || queryPart;
+      const params = new URLSearchParams(combined);
+
+      const access_token = params.get('access_token') ?? undefined;
+      const refresh_token = params.get('refresh_token') ?? undefined;
+      const token_hash = params.get('token_hash') ?? undefined;
+      const type = params.get('type') ?? undefined;
+
+      router.replace({
+        pathname: '/auth/confirm',
+        params: { access_token, refresh_token, token_hash, type },
+      } as any);
+    } catch {}
+  }
+
+  return null;
+}
+
 function ShareIntentHandler() {
   const router = useRouter();
   const { url, platform, error } = useShareIntent();
@@ -111,6 +152,7 @@ export default function RootLayout() {
       <LanguageProvider>
       <AuthProvider>
         <NavigationGuard />
+        <AuthDeepLinkHandler />
         <ShareIntentProvider>
           <ShareIntentHandler />
           <View style={{ flex: 1 }}>

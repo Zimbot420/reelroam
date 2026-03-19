@@ -21,7 +21,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 export async function signUpWithEmail(email: string, password: string) {
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: 'scrollaway://auth/confirm',
+    },
+  });
   if (error) throw error;
   return data;
 }
