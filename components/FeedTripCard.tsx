@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Trip } from '../types';
 import {
+  supabase,
   likeTrip, unlikeTrip, hasLikedTrip,
   saveTrip, unsaveTrip, hasSavedTrip,
 } from '../lib/supabase';
@@ -155,6 +156,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
   const [saved, setSaved] = useState(false);
   const [likeCount, setLikeCount] = useState(trip.like_count ?? 0);
   const [saveCount, setSaveCount] = useState(trip.save_count ?? 0);
+  const [commentCount, setCommentCount] = useState(trip.comment_count ?? 0);
   const heartScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const iconAnim = useRef(new Animated.Value(0)).current;
@@ -172,6 +174,10 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
     if (!deviceId) return;
     hasLikedTrip(trip.id, deviceId).then(setLiked);
     hasSavedTrip(trip.id, deviceId).then(setSaved);
+    // Fetch real comment count from trip_comments table
+    supabase.from('trip_comments').select('*', { count: 'exact', head: true }).eq('trip_id', trip.id)
+      .then(({ count }) => { if (count !== null) setCommentCount(count); })
+      .catch(() => {});
   }, [trip.id, deviceId, savedKey]);
 
   // Auto-playing slideshow — only runs when this card is visible on screen
@@ -364,7 +370,7 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
         >
           <Ionicons name="chatbubble-outline" size={24} color="rgba(255,255,255,0.9)" />
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
-            {(trip.comment_count ?? 0) >= 1000 ? `${((trip.comment_count ?? 0) / 1000).toFixed(1)}k` : (trip.comment_count ?? 0)}
+            {commentCount >= 1000 ? `${(commentCount / 1000).toFixed(1)}k` : commentCount}
           </Text>
         </TouchableOpacity>
 

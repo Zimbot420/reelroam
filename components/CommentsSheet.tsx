@@ -231,30 +231,28 @@ export default function CommentsSheet({
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          try {
-            // Delete from DB — only critical call
-            const { error: delError } = await supabase
-              .from('trip_comments')
-              .delete()
-              .eq('id', comment.id)
-              .eq('device_id', deviceId || await getOrCreateDeviceId());
-            if (delError) throw delError;
+          // Resolve device ID upfront
+          const did = deviceId || await getOrCreateDeviceId();
 
-            // Update UI immediately
-            setComments((prev) => {
-              const updated = prev.filter((c) => c.id !== comment.id);
-              onCommentCountChange?.(updated.length);
-              return updated;
-            });
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          // Delete from DB
+          const { error: delError } = await supabase
+            .from('trip_comments')
+            .delete()
+            .eq('id', comment.id)
+            .eq('device_id', did);
 
-            // Decrement count (best-effort)
-            supabase.from('trips').select('comment_count').eq('id', tripId).single().then(({ data }) => {
-              if (data) supabase.from('trips').update({ comment_count: Math.max((data.comment_count ?? 1) - 1, 0) }).eq('id', tripId);
-            }).catch(() => {});
-          } catch {
+          if (delError) {
             Alert.alert('Error', 'Could not delete comment.');
+            return;
           }
+
+          // Success — update UI
+          setComments((prev) => {
+            const updated = prev.filter((c) => c.id !== comment.id);
+            onCommentCountChange?.(updated.length);
+            return updated;
+          });
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         },
       },
     ]);
