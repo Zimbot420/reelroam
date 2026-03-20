@@ -9,7 +9,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UNSPLASH_BASE = 'https://api.unsplash.com';
-const UNSPLASH_ACCESS_KEY = 'nOofYNPprVKQJc8VOdXfi9xhxUYJTvZD7xD5_NcvfcE';
+// Unsplash demo tier (50 req/hr) is too low for production use.
+// Disabled until production access is approved (5,000 req/hr, free).
+// Uncomment when approved:
+// const UNSPLASH_ACCESS_KEY = 'nOofYNPprVKQJc8VOdXfi9xhxUYJTvZD7xD5_NcvfcE';
+const UNSPLASH_ACCESS_KEY = '';
 
 // ─── In-memory cache (persists across mounts within a session) ───────────────
 const memoryCache = new Map<string, string[]>();
@@ -112,7 +116,9 @@ export async function fetchTripPhotos(
   destination: string,
   locationNames: string[],
 ): Promise<string[]> {
-  const names = [destination, ...locationNames.slice(0, 4)].filter(Boolean);
+  // Only fetch for the destination — not each location. Saves 4x API calls.
+  // Location-specific photos are fetched lazily only when activity cards expand.
+  const names = [destination].filter(Boolean);
   if (names.length === 0) return [];
 
   const results = await Promise.all(names.map((n) => fetchLocationPhoto(n, 2)));
