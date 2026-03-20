@@ -292,7 +292,18 @@ export default function FeedTripCard({ trip, deviceId, cardHeight, isActive, onP
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
       />
 
-      {/* Top area intentionally clear — content lives in bottom section */}
+      {/* Unsplash photo credit (required for API access) */}
+      {(() => {
+        const credit = (trip.itinerary as any)?.photo_credits?.[currentIndex] ?? (trip.itinerary as any)?.photo_credits?.[0];
+        if (!credit?.name) return null;
+        return (
+          <View style={{ position: 'absolute', top: insets.top + 4, left: 12, zIndex: 5 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 9 }}>
+              Photo by {credit.name} on Unsplash
+            </Text>
+          </View>
+        );
+      })()}
 
       {/* ── Right-side action column — frosted glass pill container ── */}
       <View

@@ -10,6 +10,7 @@ import LottieView from 'lottie-react-native';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
 import { fetchPlaceImages, SlideImage } from '../lib/api/fetchPlaceImages';
+import { fetchTripPhotosWithAttribution } from '../lib/api/photos';
 import { supabase } from '../lib/supabase';
 import { getOrCreateDeviceId } from '../lib/deviceId';
 import { getProStatusAsync, incrementTripCount } from '../hooks/useProStatus';
@@ -312,15 +313,23 @@ export default function ProcessingScreen() {
           const { slug } = await itineraryPromise;
           await incrementTripCount();
 
-          // Store photo URLs in trip JSONB (fire-and-forget, zero extra API calls)
-          const photoUrls = slideImagesRef.current.map((img) => img.url).filter(Boolean);
-          if (photoUrls.length > 0) {
+          // Store photo URLs + attribution in trip JSONB (fire-and-forget)
+          // Fetch with attribution from Unsplash for proper credit
+          const dest = extraction.region ?? '';
+          fetchTripPhotosWithAttribution(dest).then((photosWithAttrib) => {
+            if (photosWithAttrib.length === 0) return;
             supabase.from('trips').select('id, itinerary').eq('share_slug', slug).maybeSingle().then(({ data: tripRow }) => {
               if (tripRow) {
-                supabase.from('trips').update({ itinerary: { ...(tripRow.itinerary as any), photo_urls: photoUrls } }).eq('id', tripRow.id).then(() => {}).catch(() => {});
+                supabase.from('trips').update({
+                  itinerary: {
+                    ...(tripRow.itinerary as any),
+                    photo_urls: photosWithAttrib.map((p) => p.url),
+                    photo_credits: photosWithAttrib.map((p) => ({ name: p.photographer, url: p.photographerUrl })),
+                  },
+                }).eq('id', tripRow.id).catch(() => {});
               }
             }).catch(() => {});
-          }
+          }).catch(() => {});
 
           // Check + award badges in background (don't block navigation)
           checkAndAwardBadges(device_id, {

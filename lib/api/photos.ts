@@ -2,35 +2,36 @@
  * Free photo service using Unsplash API.
  * Replaces Google Places photo fetching to eliminate $0.024/call costs.
  *
- * Unsplash free tier: 50 req/hr (demo), unlimited (production — apply at unsplash.com/developers).
- * For now, we use the demo key. If rate-limited, falls back to a deterministic placeholder.
+ * Unsplash production: 5,000 req/hr (free with attribution).
+ * Attribution required: "Photo by [Name] on Unsplash"
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UNSPLASH_BASE = 'https://api.unsplash.com';
-// Unsplash demo tier (50 req/hr) is too low for production use.
-// Disabled until production access is approved (5,000 req/hr, free).
-// Uncomment when approved:
-// const UNSPLASH_ACCESS_KEY = 'nOofYNPprVKQJc8VOdXfi9xhxUYJTvZD7xD5_NcvfcE';
-const UNSPLASH_ACCESS_KEY = '';
+const UNSPLASH_ACCESS_KEY = 'nOofYNPprVKQJc8VOdXfi9xhxUYJTvZD7xD5_NcvfcE';
 
-// ─── In-memory cache (persists across mounts within a session) ───────────────
-const memoryCache = new Map<string, string[]>();
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-// ─── AsyncStorage disk cache (persists across app launches) ──────────────────
-const DISK_CACHE_PREFIX = '@photo_cache:';
+export interface PhotoWithAttribution {
+  url: string;
+  photographer: string;
+  photographerUrl: string;
+  downloadEndpoint: string;  // Must be triggered per Unsplash guidelines
+}
 
-async function getCachedPhotos(key: string): Promise<string[] | null> {
-  // Memory first
+// ─── In-memory cache ─────────────────────────────────────────────────────────
+const memoryCache = new Map<string, PhotoWithAttribution[]>();
+
+const DISK_CACHE_PREFIX = '@photo_cache_v2:';
+
+async function getCachedPhotos(key: string): Promise<PhotoWithAttribution[] | null> {
   const mem = memoryCache.get(key);
   if (mem) return mem;
-
-  // Disk fallback
   try {
     const stored = await AsyncStorage.getItem(DISK_CACHE_PREFIX + key);
     if (stored) {
-      const parsed = JSON.parse(stored) as string[];
+      const parsed = JSON.parse(stored) as PhotoWithAttribution[];
       memoryCache.set(key, parsed);
       return parsed;
     }
@@ -38,20 +39,17 @@ async function getCachedPhotos(key: string): Promise<string[] | null> {
   return null;
 }
 
-async function setCachedPhotos(key: string, urls: string[]) {
-  memoryCache.set(key, urls);
+async function setCachedPhotos(key: string, photos: PhotoWithAttribution[]) {
+  memoryCache.set(key, photos);
   try {
-    await AsyncStorage.setItem(DISK_CACHE_PREFIX + key, JSON.stringify(urls));
+    await AsyncStorage.setItem(DISK_CACHE_PREFIX + key, JSON.stringify(photos));
   } catch {}
 }
 
-// ─── Unsplash search ─────────────────────────────────────────────────────────
+// ─── Unsplash search (with attribution) ──────────────────────────────────────
 
-async function searchUnsplash(query: string, count = 3): Promise<string[]> {
-  if (!UNSPLASH_ACCESS_KEY || UNSPLASH_ACCESS_KEY === 'YOUR_UNSPLASH_ACCESS_KEY') {
-    // No API key — use deterministic placeholder
-    return generatePlaceholders(query, count);
-  }
+async function searchUnsplash(query: string, count = 3): Promise<PhotoWithAttribution[]> {
+  if (!UNSPLASH_ACCESS_KEY) return generatePlaceholders(query, count);
 
   try {
     const res = await fetch(
@@ -59,27 +57,39 @@ async function searchUnsplash(query: string, count = 3): Promise<string[]> {
       { headers: { Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}` } },
     );
 
-    if (!res.ok) {
-      // Rate limited or error — fall back to placeholders
-      return generatePlaceholders(query, count);
-    }
+    if (!res.ok) return generatePlaceholders(query, count);
 
     const data = await res.json();
-    const photos = (data.results ?? []).map((r: any) => r.urls?.regular ?? r.urls?.small ?? '');
-    return photos.filter(Boolean);
+    const photos: PhotoWithAttribution[] = (data.results ?? []).map((r: any) => ({
+      url: r.urls?.regular ?? r.urls?.small ?? '',
+      photographer: r.user?.name ?? 'Unknown',
+      photographerUrl: r.user?.links?.html ?? 'https://unsplash.com',
+      downloadEndpoint: r.links?.download_location ?? '',
+    })).filter((p: PhotoWithAttribution) => p.url);
+
+    // Trigger download tracking for each photo (required by Unsplash guidelines)
+    for (const p of photos) {
+      if (p.downloadEndpoint) {
+        fetch(`${p.downloadEndpoint}?client_id=${UNSPLASH_ACCESS_KEY}`).catch(() => {});
+      }
+    }
+
+    return photos;
   } catch {
     return generatePlaceholders(query, count);
   }
 }
 
-// ─── Deterministic placeholder (zero API calls) ─────────────────────────────
+// ─── Placeholders (zero API calls) ───────────────────────────────────────────
 
-function generatePlaceholders(query: string, count: number): string[] {
-  // Use picsum.photos with a seed derived from the query for consistent images
+function generatePlaceholders(query: string, count: number): PhotoWithAttribution[] {
   const seed = hashCode(query);
-  return Array.from({ length: count }, (_, i) =>
-    `https://picsum.photos/seed/${Math.abs(seed + i)}/800/500`,
-  );
+  return Array.from({ length: count }, (_, i) => ({
+    url: `https://picsum.photos/seed/${Math.abs(seed + i)}/800/500`,
+    photographer: '',
+    photographerUrl: '',
+    downloadEndpoint: '',
+  }));
 }
 
 function hashCode(str: string): number {
@@ -90,59 +100,49 @@ function hashCode(str: string): number {
   return hash;
 }
 
-// ─── Public API (drop-in replacements) ───────────────────────────────────────
+// ─── Public API ──────────────────────────────────────────────────────────────
 
-/**
- * Fetch photos for a destination/location. Replaces Google Places findplacefromtext + photo.
- * Returns up to `count` photo URLs. Results are cached to disk.
- */
-export async function fetchLocationPhoto(query: string, count = 3): Promise<string[]> {
+/** Fetch photos with attribution for a destination. Cached to disk. */
+export async function fetchLocationPhotoWithAttribution(query: string, count = 3): Promise<PhotoWithAttribution[]> {
   if (!query.trim()) return [];
-
-  const cacheKey = `loc:${query.toLowerCase().trim()}`;
+  const cacheKey = `loc2:${query.toLowerCase().trim()}`;
   const cached = await getCachedPhotos(cacheKey);
   if (cached) return cached;
-
-  const urls = await searchUnsplash(query, count);
-  if (urls.length > 0) await setCachedPhotos(cacheKey, urls);
-  return urls;
+  const photos = await searchUnsplash(query, count);
+  if (photos.length > 0) await setCachedPhotos(cacheKey, photos);
+  return photos;
 }
 
-/**
- * Fetch photos for a trip (destination + location names).
- * Replaces fetchPlaceImages / fetchTripPhotos from Google Places.
- */
+/** Simple URL-only wrapper (backwards compatible). */
+export async function fetchLocationPhoto(query: string, count = 3): Promise<string[]> {
+  const photos = await fetchLocationPhotoWithAttribution(query, count);
+  return photos.map((p) => p.url);
+}
+
+/** Fetch photos for a trip. Returns URLs + attribution for the first photo. */
 export async function fetchTripPhotos(
   destination: string,
-  locationNames: string[],
+  _locationNames: string[],
 ): Promise<string[]> {
-  // Only fetch for the destination — not each location. Saves 4x API calls.
-  // Location-specific photos are fetched lazily only when activity cards expand.
   const names = [destination].filter(Boolean);
   if (names.length === 0) return [];
-
   const results = await Promise.all(names.map((n) => fetchLocationPhoto(n, 2)));
-
-  // Destination hero shot leads; remaining follow
   const destPhotos = results[0] ?? [];
-  const locPhotos = results.slice(1).flat();
-  return [destPhotos[0], ...locPhotos, ...destPhotos.slice(1)].filter(Boolean).slice(0, 12);
+  return destPhotos.filter(Boolean).slice(0, 12);
 }
 
-/**
- * Fetch a single photo URL for an activity/place. Replaces usePlacePhoto from Google Places.
- * Returns a single URL or empty string.
- */
+/** Fetch trip photos with attribution data (for storing in JSONB). */
+export async function fetchTripPhotosWithAttribution(
+  destination: string,
+): Promise<PhotoWithAttribution[]> {
+  if (!destination) return [];
+  return fetchLocationPhotoWithAttribution(destination, 5);
+}
+
+/** Fetch a single photo for an activity. */
 export async function fetchActivityPhoto(name: string, locationName: string): Promise<string> {
   const query = [name, locationName].filter(Boolean).join(' ');
   if (!query) return '';
-
-  const cacheKey = `act:${query.toLowerCase().trim()}`;
-  const cached = await getCachedPhotos(cacheKey);
-  if (cached && cached[0]) return cached[0];
-
-  const urls = await searchUnsplash(query, 1);
-  const url = urls[0] ?? '';
-  if (url) await setCachedPhotos(cacheKey, [url]);
-  return url;
+  const photos = await fetchLocationPhoto(query, 1);
+  return photos[0] ?? '';
 }
