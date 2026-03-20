@@ -9,8 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UNSPLASH_BASE = 'https://api.unsplash.com';
-// Demo access key — replace with production key from unsplash.com/developers
-const UNSPLASH_ACCESS_KEY = 'YOUR_UNSPLASH_ACCESS_KEY';
+const UNSPLASH_ACCESS_KEY = 'nOofYNPprVKQJc8VOdXfi9xhxUYJTvZD7xD5_NcvfcE';
 
 // ─── In-memory cache (persists across mounts within a session) ───────────────
 const memoryCache = new Map<string, string[]>();
