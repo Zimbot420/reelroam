@@ -92,12 +92,13 @@ import { fetchTripPhotos as fetchTripPhotosFromService } from '../lib/api/photos
 const _feedPhotoCache = new Map<string, string[]>();
 
 async function fetchTripPhotos(trip: Trip): Promise<string[]> {
+  // Use pre-stored photo URLs if available (zero API calls)
+  const stored = (trip.itinerary as any)?.photo_urls as string[] | undefined;
+  if (stored && stored.length > 0) return stored.slice(0, 12);
+
+  // Fallback for old trips without stored photos
   const destination = trip.itinerary?.destination ?? trip.title ?? '';
-  const locationNames = (trip.locations ?? [])
-    .slice(0, 4)
-    .map((l) => l.name)
-    .filter(Boolean) as string[];
-  return fetchTripPhotosFromService(destination, locationNames);
+  return fetchTripPhotosFromService(destination, []);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────

@@ -74,11 +74,13 @@ function CardSkeleton() {
 // ─── Bucketlist card ──────────────────────────────────────────────────────────
 
 function BucketlistCard({ trip, onPress }: { trip: SavedTrip; onPress: () => void }) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const destination = trip.itinerary?.destination ?? trip.title ?? 'Unknown';
+  const storedUrl = (trip.itinerary as any)?.photo_urls?.[0] as string | undefined;
+  const [imageUrl, setImageUrl] = useState<string | null>(storedUrl ?? null);
   const days = trip.itinerary?.totalDays ?? 0;
 
   useEffect(() => {
+    if (storedUrl || imageUrl) return;
     fetchCardImage(destination).then(setImageUrl);
   }, [trip.id]);
 

@@ -10,6 +10,7 @@ import LottieView from 'lottie-react-native';
 import { extractLocations } from '../lib/api/extract';
 import { generateItinerary } from '../lib/api/itinerary';
 import { fetchPlaceImages, SlideImage } from '../lib/api/fetchPlaceImages';
+import { supabase } from '../lib/supabase';
 import { getOrCreateDeviceId } from '../lib/deviceId';
 import { getProStatusAsync, incrementTripCount } from '../hooks/useProStatus';
 import { checkAndAwardBadges } from '../lib/badges';
@@ -310,6 +311,17 @@ export default function ProcessingScreen() {
           // Wait for itinerary, then arm the "ready" flag
           const { slug } = await itineraryPromise;
           await incrementTripCount();
+
+          // Store photo URLs in trip JSONB (fire-and-forget, zero extra API calls)
+          const photoUrls = slideImagesRef.current.map((img) => img.url).filter(Boolean);
+          if (photoUrls.length > 0) {
+            supabase.from('trips').select('id, itinerary').eq('share_slug', slug).maybeSingle().then(({ data: tripRow }) => {
+              if (tripRow) {
+                supabase.from('trips').update({ itinerary: { ...(tripRow.itinerary as any), photo_urls: photoUrls } }).eq('id', tripRow.id).then(() => {}).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+
           // Check + award badges in background (don't block navigation)
           checkAndAwardBadges(device_id, {
             trigger: 'trip_generated',

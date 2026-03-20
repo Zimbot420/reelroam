@@ -175,10 +175,11 @@ interface GridTripCardProps {
 
 function GridTripCard({ trip, onPress }: GridTripCardProps) {
   const destination = trip.itinerary?.destination ?? trip.title ?? 'Trip';
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const storedUrl = (trip.itinerary as any)?.photo_urls?.[0] as string | undefined;
+  const [photoUrl, setPhotoUrl] = useState<string | null>(storedUrl ?? null);
 
   useEffect(() => {
-    if (!destination) return;
+    if (storedUrl || photoUrl || !destination) return;
     fetchLocationPhoto(destination, 1).then((urls) => {
       if (urls[0]) setPhotoUrl(urls[0]);
     }).catch(() => {});
@@ -274,14 +275,15 @@ interface PastTripCardProps {
 
 function PastTripCard({ trip, onPress }: PastTripCardProps) {
   const destination = trip.title ?? 'Trip';
-  const [photoUrl, setPhotoUrl] = useState<string | null>(trip.cover_url ?? null);
+  const storedUrl = trip.cover_url ?? (trip.itinerary as any)?.photo_urls?.[0] ?? null;
+  const [photoUrl, setPhotoUrl] = useState<string | null>(storedUrl);
 
   useEffect(() => {
-    if (trip.cover_url || !destination) return;
+    if (storedUrl || photoUrl || !destination) return;
     fetchLocationPhoto(destination, 1).then((urls) => {
       if (urls[0]) setPhotoUrl(urls[0]);
     }).catch(() => {});
-  }, [destination, trip.cover_url]);
+  }, [destination]);
 
   const moodEmojis = (trip.mood_tags ?? []).slice(0, 4).map((t) => MOOD_EMOJIS[t] ?? '').join(' ');
 
