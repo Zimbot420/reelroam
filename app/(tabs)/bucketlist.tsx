@@ -33,17 +33,12 @@ type SavedTrip = Trip & { saved_at: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+import { fetchLocationPhoto } from '../../lib/api/photos';
+
 async function fetchCardImage(query: string): Promise<string | null> {
   try {
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) return null;
-    const res = await fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=photos&key=${apiKey}`,
-    );
-    const json = await res.json();
-    const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-    if (!ref) return null;
-    return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${ref}&key=${apiKey}`;
+    const urls = await fetchLocationPhoto(query, 1);
+    return urls[0] ?? null;
   } catch {
     return null;
   }

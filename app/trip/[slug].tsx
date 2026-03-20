@@ -124,9 +124,9 @@ type TransportMode = 'bus' | 'walk' | 'car';
 
 // ─── Google Places photo lookup ───────────────────────────────────────────────
 
-const GMAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
-const PLACES_BASE = 'https://maps.googleapis.com/maps/api/place';
-// Module-level cache: query string → photo URL (empty string = no photo found)
+import { fetchActivityPhoto } from '../../lib/api/photos';
+
+// Module-level cache: query string → photo URL
 const _photoCache = new Map<string, string>();
 
 function usePlacePhoto(name: string, locationName: string, shouldFetch: boolean): string | null {
@@ -134,31 +134,22 @@ function usePlacePhoto(name: string, locationName: string, shouldFetch: boolean)
   const fetchedRef = useRef(false);
 
   useEffect(() => {
-    if (!shouldFetch || fetchedRef.current || !GMAPS_KEY) return;
+    if (!shouldFetch || fetchedRef.current) return;
     fetchedRef.current = true;
 
     const query = [name, locationName].filter(Boolean).join(' ');
-
-    // Serve from cache immediately if we've seen this query before
     const cached = _photoCache.get(query);
     if (cached !== undefined) {
       if (cached) setUrl(cached);
       return;
     }
 
-    fetch(`${PLACES_BASE}/textsearch/json?query=${encodeURIComponent(query)}&key=${GMAPS_KEY}`)
-      .then((r) => r.json())
-      .then((data) => {
-        const ref: string | undefined = data.results?.[0]?.photos?.[0]?.photo_reference;
-        const photoUrl = ref
-          ? `${PLACES_BASE}/photo?maxwidth=800&photo_reference=${ref}&key=${GMAPS_KEY}`
-          : '';
-        _photoCache.set(query, photoUrl);
-        if (photoUrl) setUrl(photoUrl);
-      })
-      .catch(() => {
-        _photoCache.set(query, ''); // don't retry failed queries
-      });
+    fetchActivityPhoto(name, locationName).then((photoUrl) => {
+      _photoCache.set(query, photoUrl);
+      if (photoUrl) setUrl(photoUrl);
+    }).catch(() => {
+      _photoCache.set(query, '');
+    });
   }, [shouldFetch]);
 
   return url;

@@ -3,14 +3,12 @@
  * All requests are client-side — EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is safe to use here.
  */
 
+// Reduced from 7 to 3 categories to cut API costs by ~60%
+// Each category = 1 Nearby Search call ($0.032). 3 vs 7 = $0.096 vs $0.224 per pan.
 export const POI_CATEGORIES = [
-  { type: 'restaurant',       emoji: '🍽️', label: 'Food'     },
-  { type: 'tourist_attraction', emoji: '⭐', label: 'Sights'   },
-  { type: 'cafe',             emoji: '☕', label: 'Café'     },
-  { type: 'bar',              emoji: '🍸', label: 'Bars'     },
-  { type: 'museum',           emoji: '🏛️', label: 'Culture'  },
-  { type: 'park',             emoji: '🌿', label: 'Parks'    },
-  { type: 'shopping_mall',    emoji: '🛍️', label: 'Shopping' },
+  { type: 'restaurant',        emoji: '🍽️', label: 'Food'   },
+  { type: 'tourist_attraction', emoji: '⭐', label: 'Sights' },
+  { type: 'cafe',              emoji: '☕', label: 'Café'   },
 ] as const
 
 export type POIType = (typeof POI_CATEGORIES)[number]['type']

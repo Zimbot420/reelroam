@@ -562,13 +562,9 @@ export default function EditProfile() {
       const topDest = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0];
       if (!topDest) return;
 
-      const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(topDest)}&inputtype=textquery&fields=photos&key=${apiKey}`;
-      const res = await fetch(url);
-      const json = await res.json();
-      const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-      if (ref) {
-        setAiCoverUrl(`https://maps.googleapis.com/maps/api/place/photo?maxwidth=1200&photo_reference=${ref}&key=${apiKey}`);
-      }
+      const { fetchLocationPhoto } = require('../../lib/api/photos');
+      const urls = await fetchLocationPhoto(topDest, 1);
+      if (urls[0]) setAiCoverUrl(urls[0]);
     } catch {
       // non-critical
     }

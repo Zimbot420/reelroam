@@ -45,6 +45,7 @@ import {
   calculateWorldPercentage,
   extractCountriesFromTrips,
 } from '../../lib/countryUtils';
+import { fetchLocationPhoto } from '../../lib/api/photos';
 
 const AUTO_POPULATE_KEY = 'hasSeenMapAutopopulate';
 
@@ -174,24 +175,13 @@ interface GridTripCardProps {
 
 function GridTripCard({ trip, onPress }: GridTripCardProps) {
   const destination = trip.itinerary?.destination ?? trip.title ?? 'Trip';
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!apiKey || !destination) return;
-    fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(destination)}&inputtype=textquery&fields=photos&key=${apiKey}`,
-    )
-      .then((r) => r.json())
-      .then((json) => {
-        const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-        if (ref) {
-          setPhotoUrl(
-            `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${ref}&key=${apiKey}`,
-          );
-        }
-      })
-      .catch(() => {});
+    if (!destination) return;
+    fetchLocationPhoto(destination, 1).then((urls) => {
+      if (urls[0]) setPhotoUrl(urls[0]);
+    }).catch(() => {});
   }, [destination]);
 
   return (
@@ -284,21 +274,13 @@ interface PastTripCardProps {
 
 function PastTripCard({ trip, onPress }: PastTripCardProps) {
   const destination = trip.title ?? 'Trip';
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   const [photoUrl, setPhotoUrl] = useState<string | null>(trip.cover_url ?? null);
 
-  // Fetch places photo only if no cover_url
   useEffect(() => {
-    if (trip.cover_url || !apiKey || !destination) return;
-    fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(destination)}&inputtype=textquery&fields=photos&key=${apiKey}`,
-    )
-      .then((r) => r.json())
-      .then((json) => {
-        const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-        if (ref) setPhotoUrl(`https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${ref}&key=${apiKey}`);
-      })
-      .catch(() => {});
+    if (trip.cover_url || !destination) return;
+    fetchLocationPhoto(destination, 1).then((urls) => {
+      if (urls[0]) setPhotoUrl(urls[0]);
+    }).catch(() => {});
   }, [destination, trip.cover_url]);
 
   const moodEmojis = (trip.mood_tags ?? []).slice(0, 4).map((t) => MOOD_EMOJIS[t] ?? '').join(' ');

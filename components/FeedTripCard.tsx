@@ -84,51 +84,20 @@ export function FeedTripCardSkeleton({ height }: { height: number }) {
   );
 }
 
-// ─── Photo fetching ───────────────────────────────────────────────────────────
+// ─── Photo fetching (Unsplash — free, replaces Google Places photos) ─────────
+
+import { fetchTripPhotos as fetchTripPhotosFromService } from '../lib/api/photos';
 
 // Module-level cache: trip.id → resolved photo URLs
-// Persists across card mount/unmount cycles so re-scrolling is instant
 const _feedPhotoCache = new Map<string, string[]>();
 
-async function fetchLocationPhotos(locationName: string, apiKey: string): Promise<string[]> {
-  try {
-    const res = await fetch(
-      `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(locationName)}&inputtype=textquery&fields=photos&key=${apiKey}`,
-    );
-    const json = await res.json();
-    const photos: any[] = json.candidates?.[0]?.photos ?? [];
-    // Sort by width descending — highest resolution first
-    const sorted = [...photos].sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
-    return sorted.slice(0, 3).map((p: any) =>
-      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1600&maxheight=1600&photo_reference=${p.photo_reference}&key=${apiKey}`,
-    );
-  } catch {
-    return [];
-  }
-}
-
 async function fetchTripPhotos(trip: Trip): Promise<string[]> {
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-  if (!apiKey) return [];
-
   const destination = trip.itinerary?.destination ?? trip.title ?? '';
   const locationNames = (trip.locations ?? [])
     .slice(0, 4)
     .map((l) => l.name)
     .filter(Boolean) as string[];
-
-  const names = destination ? [destination, ...locationNames] : locationNames;
-  if (names.length === 0) return [];
-
-  // Fetch all names in parallel — reduces wait from Σ(each) to max(each)
-  const results = await Promise.all(names.map((n) => fetchLocationPhotos(n, apiKey)));
-
-  // Destination hero shot leads; remaining location photos follow
-  const destPhotos = results[0] ?? [];
-  const locPhotos  = results.slice(1).flat();
-  return ([destPhotos[0], ...locPhotos, ...destPhotos.slice(1)] as string[])
-    .filter(Boolean)
-    .slice(0, 12);
+  return fetchTripPhotosFromService(destination, locationNames);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────

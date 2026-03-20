@@ -45,8 +45,8 @@ const GOOGLE_MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? ''
 
 // POI cache: key = "lat,lng", value = { pois, fetchedAt }
 const poiCache = new Map<string, { pois: POIPlace[]; fetchedAt: number }>()
-const CACHE_TTL_MS = 5 * 60 * 1000   // 5 minutes
-const REFETCH_DISTANCE_M = 500        // re-fetch after moving 500 m
+const CACHE_TTL_MS = 60 * 60 * 1000   // 1 hour (was 5 min — saves API calls)
+const REFETCH_DISTANCE_M = 1000       // re-fetch after moving 1 km (was 500m)
 const MAX_VISIBLE_PINS = 30
 
 // ─── Permissions screen ───────────────────────────────────────────────────────

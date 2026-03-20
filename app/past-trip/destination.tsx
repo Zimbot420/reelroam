@@ -111,7 +111,7 @@ export default function PastTripDestination() {
       } finally {
         setSearching(false);
       }
-    }, 350);
+    }, 600);
   }, [query]);
 
   async function selectDestination(name: string, placeId: string) {
@@ -120,19 +120,12 @@ export default function PastTripDestination() {
     setSuggestions([]);
     Keyboard.dismiss();
 
-    // Fetch Places cover photo
+    // Fetch cover photo (free via Unsplash/placeholders)
     setCoverLoading(true);
     setCoverUrl(null);
     try {
-      const findUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(name)}&inputtype=textquery&fields=photos&key=${API_KEY}`;
-      const res = await fetch(findUrl);
-      const json = await res.json();
-      const ref = json.candidates?.[0]?.photos?.[0]?.photo_reference;
-      if (ref) {
-        setCoverUrl(
-          `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${ref}&key=${API_KEY}`,
-        );
-      }
+      const photos = await require('../../lib/api/photos').fetchLocationPhoto(name, 1);
+      if (photos[0]) setCoverUrl(photos[0]);
     } finally {
       setCoverLoading(false);
     }
